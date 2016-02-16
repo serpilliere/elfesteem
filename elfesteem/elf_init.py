@@ -441,7 +441,7 @@ class RelATable(RelTable):
 # Section List
 
 
-class SHList:
+class SHList(object):
 
     def __init__(self, parent, sex, size):
         self.parent = parent
@@ -516,7 +516,7 @@ class SHList:
 # Program Header List
 
 
-class ProgramHeader:
+class ProgramHeader(object):
 
     def __init__(self, parent, sex, size, phstr):
         self.parent = parent
@@ -536,7 +536,7 @@ class ProgramHeader:
         self.parent.resize(sec, diff)
 
 
-class ProgramHeader64:
+class ProgramHeader64(object):
 
     def __init__(self, parent, sex, size, phstr):
         self.parent = parent
@@ -556,7 +556,7 @@ class ProgramHeader64:
         self.parent.resize(sec, diff)
 
 
-class PHList:
+class PHList(object):
 
     def __init__(self, parent, sex, size):
         self.parent = parent
@@ -600,7 +600,7 @@ class PHList:
                 p.ph.paddr += diff
 
 
-class virt:
+class virt(object):
 
     def __init__(self, x):
         self.parent = x
@@ -651,26 +651,8 @@ class virt:
             return self.get_rvaitem(item)
         start = item.start
         stop = item.stop
-        step = item.step
-        return self.get_rvaitem(start, stop, step)
-
-    def __getitem__(self, item):
-        """
-        XXX
-        __getitem__ in python 32bit is limited to [0-0x7fffffff]
-        So if a binary has some data mapped in hight memory, getitem is unusable
-        """
-        raise ValueError(
-            '\n\n**DEPRECATED API**\n\nuse virt.get(start, [stop]) instead of virt[start, [stop, step]]')
-
-    def __setitem__(self, item, data):
-        """
-        XXX
-        __setitem__ in python 32bit is limited to [0-0x7fffffff]
-        So if a binary has some data mapped in hight memory, setitem is unusable
-        """
-        raise ValueError(
-            '\n\n**DEPRECATED API**\n\nuse virt.set(start, [stop]) instead of virt[start, [stop, step]]')
+        assert(item.step is None)
+        return self.get_rvaitem(start, stop)
 
     def get(self, ad_start, ad_stop=None):
         rva_items = self.get_rvaitem(ad_start, ad_stop)
@@ -693,7 +675,7 @@ class virt:
 
         return data_out
 
-    def set(self, ad_start, data):
+    def set(self, item, data):
         if not type(item) is slice:
             item = slice(item, item + len(data), None)
         virt_item = self.item2virtitem(item)
@@ -711,6 +693,20 @@ class virt:
                 raise ValueError('TODO XXX')
 
         return
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            assert(item.step is None)
+            return self.get(item.start, item.stop)
+        else:
+            return self.get(item)
+
+    def __setitem__(self, item, data):
+        if isinstance(item, slice):
+            rva = item.start
+        else:
+            rva = item
+        self.set(rva, data)
 
     def max_addr(self):
         # the maximum virtual address is found by retrieving the maximum
