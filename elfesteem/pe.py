@@ -448,13 +448,11 @@ class DirImport(CStruct):
                 self.parent_head.rva2off(d.originalfirstthunk)):
                 # Add thunks list and terminating null entry
                 off = self.parent_head.rva2off(d.originalfirstthunk)
-                c[off] = (str(d.originalfirstthunks) +
-                          "\x00" * (self.parent_head._wsize / 8))
+                c[off] = str(d.originalfirstthunks)
             if d.firstthunk:
                 # Add thunks list and terminating null entry
                 off = self.parent_head.rva2off(d.firstthunk)
-                c[off] = (str(d.firstthunks) +
-                          "\x00" * (self.parent_head._wsize / 8))
+                c[off] = str(d.firstthunks)
             if (d.originalfirstthunk and
                 self.parent_head.rva2off(d.originalfirstthunk)):
                 tmp_thunk = d.originalfirstthunks
@@ -1277,20 +1275,24 @@ class DirRes(CStruct):
         nbr = resdesc.numberofnamedentries + resdesc.numberofidentries
 
         out = []
+        tmp_of = of
         for i in xrange(nbr):
-            if of >= ofend:
+            if tmp_of >= ofend:
                 break
-            if of + l >= len(s):
+            if tmp_of + l >= len(s):
                 log.warn('warning bad resource offset')
                 break
             try:
-                entry, l = ResEntry.unpack_l(s, of, self.parent_head)
+                entry, l = ResEntry.unpack_l(s, tmp_of, self.parent_head)
             except RuntimeError:
                 log.warn('bad resentry')
-                return None, of
+                return None, tmp_of
             out.append(entry)
-            of += l
-        resdesc.resentries = out
+            tmp_of += l
+        resdesc.resentries = struct_array(self, s,
+                                          of,
+                                          ResEntry,
+                                          nbr)
         dir_todo = {of_orig: resdesc}
         dir_done = {}
         xx = 0
