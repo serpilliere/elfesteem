@@ -418,13 +418,13 @@ class DirImport(CStruct):
                 elif isinstance(d.firstthunks, struct_array):
                     tmp_thunk = d.firstthunks
                 else:
-                    raise "no thunk!!"
+                    raise RuntimeError("No thunk!")
             elif d.originalfirstthunk:  # and self.parent_head.rva2off(d.originalfirstthunk):
                 tmp_thunk = d.originalfirstthunks
             elif d.firstthunk:
                 tmp_thunk = d.firstthunks
             else:
-                raise "no thunk!!"
+                raise RuntimeError("No thunk!")
 
             if tmp_thunk == d.originalfirstthunks:
                 d.firstthunks = tmp_thunk
@@ -459,7 +459,7 @@ class DirImport(CStruct):
             elif d.firstthunk:
                 tmp_thunk = d.firstthunks
             else:
-                raise "no thunk!!"
+                raise RuntimeError("No thunk!")
             for j, imp in enumerate(d.impbynames):
                 if isinstance(imp, ImportByName):
                     c[self.parent_head.rva2off(tmp_thunk[j].rva)] = str(imp)
@@ -551,34 +551,36 @@ class DirImport(CStruct):
             for d in new_impdesc:
                 self.impdesc.append(d)
 
-    def get_funcrva(self, f):
+    def get_funcrva(self, dllname, funcname):
         if self.parent_head._wsize == 32:
             mask_ptr = 0x80000000 - 1
         elif self.parent_head._wsize == 64:
             mask_ptr = 0x8000000000000000L - 1
 
         for i, d in enumerate(self.impdesc):
+            if d.dlldescname.name.lower() != dllname.lower():
+                continue
             if d.originalfirstthunk and self.parent_head.rva2off(d.originalfirstthunk):
                 tmp_thunk = d.originalfirstthunks
             elif d.firstthunk:
                 tmp_thunk = d.firstthunks
             else:
-                raise "no thunk!!"
-            if type(f) is str:
+                raise RuntimeError("No thunk!")
+            if type(funcname) is str:
                 for j, imp in enumerate(d.impbynames):
                     if isinstance(imp, ImportByName):
-                        if f == imp.name:
+                        if funcname == imp.name:
                             return d.firstthunk + j * self.parent_head._wsize / 8
-            elif type(f) in (int, long):
+            elif type(funcname) in (int, long):
                 for j, imp in enumerate(d.impbynames):
                     if not isinstance(imp, ImportByName):
-                        if tmp_thunk[j].rva & mask_ptr == f:
+                        if tmp_thunk[j].rva & mask_ptr == funcname:
                             return d.firstthunk + j * self.parent_head._wsize / 8
             else:
-                raise ValueError('unknown func tpye %s' % str(f))
+                raise ValueError('Unknown: %s %s' % (dllname, funcname))
 
-    def get_funcvirt(self, f):
-        rva = self.get_funcrva(f)
+    def get_funcvirt(self, dllname, funcname):
+        rva = self.get_funcrva(dllname, funcname)
         if rva == None:
             return
         return self.parent_head.rva2virt(rva)
@@ -942,7 +944,7 @@ class DirDelay(CStruct):
             elif d.firstthunk:
                 tmp_thunk = d.firstthunks
             else:
-                raise "no thunk!!"
+                raise RuntimeError("No thunk!")
             for i, imp in enumerate(d.impbynames):
                 if isinstance(imp, ImportByName):
                     tmp_thunk[i].rva = isfromva(rva)
@@ -969,7 +971,7 @@ class DirDelay(CStruct):
             elif d.firstthunk:
                 tmp_thunk = d.firstthunks
             else:
-                raise "no thunk!!"
+                raise RuntimeError("No thunk!")
             for j, imp in enumerate(d.impbynames):
                 if isinstance(imp, ImportByName):
                     c[self.parent_head.rva2off(tmp_thunk[j].rva)] = str(imp)
@@ -1061,7 +1063,7 @@ class DirDelay(CStruct):
             elif d.firstthunk:
                 tmp_thunk = d.firstthunks
             else:
-                raise "no thunk!!"
+                raise RuntimeError("No thunk!")
             if type(f) is str:
                 for j, imp in enumerate(d.impbynames):
                     if isinstance(imp, ImportByName):
