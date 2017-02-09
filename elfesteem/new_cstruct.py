@@ -86,16 +86,16 @@ class Cstruct_Metaclass(type):
         return o
 
     def unpack_l(cls, s, off=0, parent_head=None, _sex=None, _wsize=None):
-        if _sex == None and _wsize == None:
+        if _sex is None and _wsize is None:
             # get sex and size from parent
-            if parent_head:
+            if parent_head is not None:
                 _sex = parent_head._sex
                 _wsize = parent_head._wsize
             else:
                 _sex = 0
                 _wsize = 32
         c = cls(_sex=_sex, _wsize=_wsize)
-        if parent_head == None:
+        if parent_head is None:
             parent_head = c
         c.parent_head = parent_head
 
@@ -182,8 +182,9 @@ class CStruct(object):
                 # else default sex & size
                 _sex = 0
                 _size = 32
-        self.sex = _sex
-        self.wsize = _wsize
+        # _sex is 0 or 1, sex is '<' or '>'
+        self._sex = _sex
+        self._wsize = _wsize
         if self._packformat:
             self.sex = self._packformat
         else:
@@ -206,7 +207,7 @@ class CStruct(object):
             value = getattr(self, fname + self.__class__.field_suffix)
             if ffmt in type2realtype or (isinstance(ffmt, str) and re.match(r'\d+s', ffmt)):
                 # basic types
-                fmt = real_fmt(ffmt, self.wsize)
+                fmt = real_fmt(ffmt, self._wsize)
                 if cpt == None:
                     if value == None:
                         o = struct.calcsize(fmt) * "\x00"
