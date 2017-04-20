@@ -401,7 +401,9 @@ class PE(object):
 
         # load section data
         filealignment = self.NThdr.filealignment
+        sectionalignment = self.NThdr.sectionalignment
         for s in self.SHList.shlist:
+            virt_size = (s.size / sectionalignment + 1) * sectionalignment
             if self.loadfrommem:
                 s.offset = s.addr
             if self.NThdr.sectionalignment > 0x1000:
@@ -420,7 +422,7 @@ class PE(object):
                 else:
                     rs = s.rawsize
                 mm = rs
-            if mm > s.size:
+            if mm > virt_size:
                 mm = min(mm, s.size)
             data = self.content[raw_off:raw_off + mm]
             s.data[0] = data
