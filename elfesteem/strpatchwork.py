@@ -1,5 +1,5 @@
 from array import array
-from sys import maxint
+from sys import maxsize
 
 
 class StrPatchwork:
@@ -18,7 +18,7 @@ class StrPatchwork:
         if type(item) is slice:
             end = item.stop
             l = len(s)
-            if l < end and end != maxint:  # XXX hack [x:] give 2GB limit
+            if l < end and end != maxsize:  # XXX hack [x:] give 2GB limit
                 # This is inefficient but avoids complicated maths if step is
                 # not 1
                 s = s[:]
