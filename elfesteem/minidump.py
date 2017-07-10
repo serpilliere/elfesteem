@@ -9,7 +9,7 @@ class Enumeration(object):
     def __init__(self, enum_info):
         """enum_info: {name: value}"""
         self._enum_info = enum_info
-        self._inv_info = {v: k for k, v in enum_info.iteritems()}
+        self._inv_info = dict((v, k) for k, v in enum_info.iteritems())
 
     def __getitem__(self, key):
         """Helper: assume that string is for key, integer is for value"""
