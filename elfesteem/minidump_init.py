@@ -134,12 +134,12 @@ class Minidump(object):
         """Build an easier to use memory view based on ModuleList and
         Memory64List streams"""
 
-        addr2module = {module.BaseOfImage: module
-                       for module in (self.modulelist.Modules if
-                                      self.modulelist else [])}
-        addr2meminfo = {memory.BaseAddress: memory
-                        for memory in (self.memoryinfolist.MemoryInfos if
-                                       self.memoryinfolist else [])}
+        addr2module = dict((module.BaseOfImage, module)
+                           for module in (self.modulelist.Modules if
+                                          self.modulelist else []))
+        addr2meminfo = dict((memory.BaseAddress, memory)
+                            for memory in (self.memoryinfolist.MemoryInfos if
+                                           self.memoryinfolist else []))
 
         mode64 = self.minidumpHDR.Flags & mp.minidumpType.MiniDumpWithFullMemory
 
