@@ -32,75 +32,23 @@ class ContectRva(object):
     def __init__(self, parent):
         self.parent = parent
 
-    def get_slice_raw(self, rva_start, rva_stop):
-        """
-        Returns RVA data between @rva_start and @rva_stop RVAs
-        @rva_start: start RVA address
-        @rva_stop: stop RVA address
-        """
-        rva_items = self.get_rva_item(rva_start, rva_stop)
-        if rva_items is None:
-            return
-        data_out = ""
-        for section, n_item in rva_items:
-            if section:
-                data_out += section.data.__getitem__(n_item)
-            else:
-                data_out += self.parent.__getitem__(n_item)
-        return data_out
-
-    def get_rva_item(self, rva_start, rva_stop):
-        """
-        Returns sections/slice data between @rva_start and @rva_stop RVAs
-        @rva_start: start RVA address
-        @rva_stop: stop RVA address
-        """
-        if self.parent.SHList is None:
-            return [(None, rva_start)]
-        if rva_stop == None:
-            s = self.parent.getsectionbyrva(rva_start)
-            if s is None:
-                return [(None, rva_start)]
-            rva_start = rva_start - s.addr
-            return [(s, rva_start)]
-        total_len = rva_stop - rva_start
-        rva_items = []
-        while total_len:
-            # Special case if look at pe hdr address
-            if 0 <= rva_start < min(self.parent.SHList[0].addr,
-                                    self.parent.NThdr.sizeofheaders):
-                s_start = rva_start
-                s_stop = rva_stop
-                s_max = min(self.parent.SHList[0].addr,
-                            self.parent.NThdr.sizeofheaders)
-                s = None
-            else:
-                s = self.parent.getsectionbyrva(rva_start)
-                if s is None:
-                    log.warn('unknown rva address! %x' % rva_start)
-                    return []
-                s_max = max(s.size, s.rawsize)
-                s_start = rva_start - s.addr
-                s_stop = rva_stop - s.addr
-            if s_stop > s_max:
-                s_stop = s_max
-            s_len = s_stop - s_start
-            total_len -= s_len
-            rva_start += s_len
-            n_item = slice(s_start, s_stop)
-            rva_items.append((s, n_item))
-        return rva_items
-
-
     def get(self, rva_start, rva_stop=None):
         """
         Get data in RVA view starting at @rva_start, stopping at @rva_stop
         @rva_start: rva start address
         @rva_stop: rva stop address
         """
-        if rva_stop is None:
-            rva_stop = rva_start + 1
-        return self.get_slice_raw(rva_start, rva_stop)
+        if rva_start < 0:
+            raise ValueError("Out of range")
+        if rva_stop is not None:
+            if rva_stop > len(self.parent.img_rva):
+                rva_stop = len(self.parent.img_rva)
+            if rva_start > len(self.parent.img_rva):
+                raise ValueError("Out of range")
+            return self.parent.img_rva[rva_start:rva_stop]
+        if rva_start > len(self.parent.img_rva):
+            raise ValueError("Out of range")
+        return self.parent.img_rva[rva_start]
 
     def set(self, rva, data):
         """
@@ -110,21 +58,13 @@ class ContectRva(object):
         """
         if not isinstance(rva, (int, long)):
             raise ValueError('addr must be int/long')
-        rva_items = self.get_rva_item(rva, rva + len(data))
-        if rva_items is None:
-            return
-        off = 0
-        for s, n_item in rva_items:
-            i = slice(off, n_item.stop + off - n_item.start, n_item.step)
-            data_slice = data.__getitem__(i)
-            s.data.__setitem__(n_item, data_slice)
-            off = i.stop
-            # XXX test patch content
-            file_off = self.parent.rva2off(s.addr + n_item.start)
-            if self.parent.content:
-                self.parent.content = self.parent.content[
-                    :file_off] + data_slice + self.parent.content[file_off + len(data_slice):]
-        return
+
+        if rva < 0:
+            raise ValueError("Out of range")
+
+        if rva + len(data) > len(self.parent.img_rva):
+            raise ValueError("Out of range")
+        self.parent.img_rva[rva] = data
 
     def __getitem__(self, item):
         if isinstance(item, slice):
@@ -431,7 +371,7 @@ class PE(object):
             data += "\x00" * ((((length + 0xfff)) & 0xFFFFF000) - length)
             self.img_rva[s.addr] = data
         # Fix img_rva
-        self.img_rva = str(self.img_rva)
+        self.img_rva = self.img_rva
 
         try:
             self.DirImport = pe.DirImport.unpack(self.img_rva,
