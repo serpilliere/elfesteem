@@ -129,28 +129,10 @@ class ContentVirtual:
         if end != None:
             end = self.parent.virt2rva(end)
 
-        sections = []
-        for s in self.parent.SHList:
-            s_max = max(s.size, s.rawsize)
-            if s.addr + s_max <= start:
-                continue
-            if end == None or s.addr < end:
-                sections.append(s)
-
-        if not sections:
+        ret = self.parent.img_rva.find(pattern, start, end)
+        if ret == -1:
             return -1
-        for s in sections:
-            if s.addr < start:
-                off = start - s.addr
-            else:
-                off = 0
-            ret = s.data.find(pattern, off)
-            if ret == -1:
-                continue
-            if end != None and s.addr + ret >= end:
-                return -1
-            return self.parent.rva2virt(s.addr + ret)
-        return -1
+        return self.parent.rva2virt(ret)
 
     def rfind(self, pattern, start=0, end=None):
         if start != 0:
@@ -158,29 +140,10 @@ class ContentVirtual:
         if end != None:
             end = self.parent.virt2rva(end)
 
-        sections = []
-        for s in self.parent.SHList:
-            s_max = max(s.size, s.rawsize)
-            if s.addr + s_max <= start:
-                continue
-            if end == None or s.addr < end:
-                sections.append(s)
-        if not sections:
+        ret = self.parent.img_rva.rfind(pattern, start, end)
+        if ret == -1:
             return -1
-
-        for s in reversed(sections):
-            if s.addr < start:
-                off = start - s.addr
-            else:
-                off = 0
-            if end == None:
-                ret = s.data.rfind(pattern, off)
-            else:
-                ret = s.data.rfind(pattern, off, end - s.addr)
-            if ret == -1:
-                continue
-            return self.parent.rva2virt(s.addr + ret)
-        return -1
+        return self.parent.rva2virt(ret)
 
     def is_addr_in(self, ad):
         return self.parent.is_in_virt_address(ad)

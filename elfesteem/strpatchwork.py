@@ -58,10 +58,10 @@ class StrPatchwork:
         self.s.extend(array("B", other))
         return self
 
-    def find(self, pattern, offset=0):
+    def find(self, pattern, start=0, end=None):
         if not self.s_cache:
             self.s_cache = self.s.tostring()
-        return self.s_cache.find(pattern, offset)
+        return self.s_cache.find(pattern, start, end)
 
     def rfind(self, pattern, start=0, end=None):
         if not self.s_cache:
