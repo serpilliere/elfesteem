@@ -5,7 +5,6 @@ import array
 import pe
 from strpatchwork import StrPatchwork
 import logging
-from collections import defaultdict
 log = logging.getLogger("peparse")
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter("%(levelname)-5s: %(message)s"))
@@ -15,7 +14,7 @@ log.setLevel(logging.WARN)
 
 class ContentManager(object):
 
-    def __get__(self, owner, x):
+    def __get__(self, owner, _):
         if hasattr(owner, '_content'):
             return owner._content
 
@@ -70,8 +69,7 @@ class ContectRva(object):
         if isinstance(item, slice):
             assert(item.step is None)
             return self.get(item.start, item.stop)
-        else:
-            return self.get(item)
+        return self.get(item)
 
     def __setitem__(self, item, data):
         if isinstance(item, slice):
@@ -81,10 +79,10 @@ class ContectRva(object):
         self.set(rva, data)
 
 
-class ContentVirtual:
+class ContentVirtual(object):
 
-    def __init__(self, x):
-        self.parent = x
+    def __init__(self, parent):
+        self.parent = parent
 
     def __getitem__(self, item):
         raise DeprecationWarning("Replace code by virt.get(start, [stop])")
@@ -119,9 +117,9 @@ class ContentVirtual:
         self.parent.rva.set(self.parent.virt2rva(addr), data)
 
     def max_addr(self):
-        s = self.parent.SHList[-1]
-        l = s.addr + s.size + self.parent.NThdr.ImageBase
-        return int(l)
+        section = self.parent.SHList[-1]
+        length = section.addr + section.size + self.parent.NThdr.ImageBase
+        return int(length)
 
     def find(self, pattern, start=0, end=None):
         if start != 0:
@@ -145,12 +143,35 @@ class ContentVirtual:
             return -1
         return self.parent.rva2virt(ret)
 
-    def is_addr_in(self, ad):
-        return self.parent.is_in_virt_address(ad)
+    def is_addr_in(self, addr):
+        return self.parent.is_in_virt_address(addr)
+
+
+
+def compute_crc(raw, olds):
+    out = 0L
+    data = raw[:]
+    if len(raw) % 2:
+        end = struct.unpack('B', data[-1])[0]
+        data = data[:-1]
+    if (len(raw) & ~0x1) % 4:
+        out += struct.unpack('H', data[:2])[0]
+        data = data[2:]
+    data = array.array('I', data)
+    out = reduce(lambda x, y: x + y, data, out)
+    out -= olds
+    while out > 0xFFFFFFFF:
+        out = (out >> 32) + (out & 0xFFFFFFFF)
+    while out > 0xFFFF:
+        out = (out & 0xFFFF) + ((out >> 16) & 0xFFFF)
+    if len(raw) % 2:
+        out += end
+    out += len(data)
+    return out
+
+
 
 # PE object
-
-
 class PE(object):
     content = ContentManager()
 
@@ -163,7 +184,7 @@ class PE(object):
         self._rva = ContectRva(self)
         self._virt = ContentVirtual(self)
         self.img_rva = StrPatchwork()
-        if pestr == None:
+        if pestr is None:
             self._content = StrPatchwork()
             self._sex = 0
             self._wsize = wsize
@@ -178,7 +199,7 @@ class PE(object):
 
             self.Opthdr = Opthdr(self)
             self.NThdr = pe.NThdr(self)
-            self.NThdr.optentries = [pe.Optehdr(self) for x in xrange(0x10)]
+            self.NThdr.optentries = [pe.Optehdr(self) for _ in xrange(0x10)]
             self.NThdr.CheckSum = 0
             self.SHList = pe.SHList(self)
             self.SHList.shlist = []
@@ -257,17 +278,17 @@ class PE(object):
                       parse_resources=True,
                       parse_delay=True,
                       parse_reloc=True):
-        of = 0
+        off = 0
         self._sex = 0
         self._wsize = 32
-        self.Doshdr = pe.Doshdr.unpack(self.content, of, self)
-        of = self.Doshdr.lfanew
-        if of > len(self.content):
+        self.Doshdr = pe.Doshdr.unpack(self.content, off, self)
+        off = self.Doshdr.lfanew
+        if off > len(self.content):
             log.warn('ntsig after eof!')
             self.NTsig = None
             return
         self.NTsig = pe.NTsig.unpack(self.content,
-                                     of, self)
+                                     off, self)
         self.DirImport = None
         self.DirExport = None
         self.DirDelay = None
@@ -277,15 +298,13 @@ class PE(object):
         if self.NTsig.signature != 0x4550:
             log.warn('not a valid pe!')
             return
-        of += len(self.NTsig)
-        self.Coffhdr, l = pe.Coffhdr.unpack_l(self.content,
-                                              of,
-                                              self)
+        off += len(self.NTsig)
+        self.Coffhdr, length = pe.Coffhdr.unpack_l(self.content,
+                                                   off,
+                                                   self)
 
-        of += l
-        m = struct.unpack('H', self.content[of:of + 2])[0]
-        m = (m >> 8) * 32
-        self._wsize = m
+        off += length
+        self._wsize = ord(self.content[off+1]) * 32
 
         if self._wsize == 32:
             Opthdr = pe.Opthdr32
@@ -296,43 +315,43 @@ class PE(object):
             # Fix for very little PE
             self.content += (0x200 - len(self.content)) * '\x00'
 
-        self.Opthdr, l = Opthdr.unpack_l(self.content, of, self)
-        self.NThdr = pe.NThdr.unpack(self.content, of + l, self)
+        self.Opthdr, length = Opthdr.unpack_l(self.content, off, self)
+        self.NThdr = pe.NThdr.unpack(self.content, off + length, self)
         self.img_rva[0] = self.content[:self.NThdr.sizeofheaders]
-        of += self.Coffhdr.sizeofoptionalheader
-        self.SHList = pe.SHList.unpack(self.content, of, self)
+        off += self.Coffhdr.sizeofoptionalheader
+        self.SHList = pe.SHList.unpack(self.content, off, self)
 
         # load section data
         filealignment = self.NThdr.filealignment
         sectionalignment = self.NThdr.sectionalignment
-        for s in self.SHList.shlist:
-            virt_size = (s.size / sectionalignment + 1) * sectionalignment
+        for section in self.SHList.shlist:
+            virt_size = (section.size / sectionalignment + 1) * sectionalignment
             if self.loadfrommem:
-                s.offset = s.addr
+                section.offset = section.addr
             if self.NThdr.sectionalignment > 0x1000:
-                raw_off = 0x200 * (s.offset / 0x200)
+                raw_off = 0x200 * (section.offset / 0x200)
             else:
-                raw_off = s.offset
-            if raw_off != s.offset:
-                log.warn('unaligned raw section (%x %x)!', raw_off, s.offset)
-            s.data = StrPatchwork()
+                raw_off = section.offset
+            if raw_off != section.offset:
+                log.warn('unaligned raw section (%x %x)!', raw_off, section.offset)
+            section.data = StrPatchwork()
 
-            if s.rawsize == 0:
-                mm = 0
+            if section.rawsize == 0:
+                rounded_size = 0
             else:
-                if s.rawsize % filealignment:
-                    rs = (s.rawsize / filealignment + 1) * filealignment
+                if section.rawsize % filealignment:
+                    rs = (section.rawsize / filealignment + 1) * filealignment
                 else:
-                    rs = s.rawsize
-                mm = rs
-            if mm > virt_size:
-                mm = min(mm, s.size)
-            data = self.content[raw_off:raw_off + mm]
-            s.data[0] = data
+                    rs = section.rawsize
+                rounded_size = rs
+            if rounded_size > virt_size:
+                rounded_size = min(rounded_size, section.size)
+            data = self.content[raw_off:raw_off + rounded_size]
+            section.data[0] = data
             # Pad data to page size 0x1000
             length = len(data)
             data += "\x00" * ((((length + 0xfff)) & 0xFFFFF000) - length)
-            self.img_rva[s.addr] = data
+            self.img_rva[section.addr] = data
         # Fix img_rva
         self.img_rva = self.img_rva
 
@@ -399,14 +418,14 @@ class PE(object):
     def getsectionbyrva(self, rva):
         if self.SHList is None:
             return None
-        for s in self.SHList.shlist:
+        for section in self.SHList.shlist:
             """
             TODO CHECK:
             some binaries have import rva outside section, but addresses
             seems to be rounded
             """
-            if s.addr <= rva < (s.addr + s.size + 0xfff) & 0xFFFFF000:
-                return s
+            if section.addr <= rva < (section.addr + section.size + 0xfff) & 0xFFFFF000:
+                return section
         return None
 
     def getsectionbyvad(self, vad):
@@ -415,17 +434,17 @@ class PE(object):
     def getsectionbyoff(self, off):
         if self.SHList is None:
             return None
-        for s in self.SHList.shlist:
-            if s.offset <= off < s.offset + s.rawsize:
-                return s
+        for section in self.SHList.shlist:
+            if section.offset <= off < section.offset + section.rawsize:
+                return section
         return None
 
     def getsectionbyname(self, name):
         if self.SHList is None:
             return None
-        for s in self.SHList:
-            if s.name.strip('\x00') == name:
-                return s
+        for section in self.SHList:
+            if section.name.strip('\x00') == name:
+                return section
         return None
 
     def is_rva_ok(self, rva):
@@ -435,26 +454,25 @@ class PE(object):
         # Special case rva in header
         if rva < self.NThdr.sizeofheaders:
             return rva
-        s = self.getsectionbyrva(rva)
-        if s is None:
+        section = self.getsectionbyrva(rva)
+        if section is None:
             raise pe.InvalidOffset('cannot get offset for 0x%X' % rva)
-            return
-        soff = (s.offset / self.NThdr.filealignment) * self.NThdr.filealignment
-        return rva - s.addr + soff
+        soff = (section.offset / self.NThdr.filealignment) * self.NThdr.filealignment
+        return rva - section.addr + soff
 
     def off2rva(self, off):
-        s = self.getsectionbyoff(off)
-        if s is None:
+        section = self.getsectionbyoff(off)
+        if section is None:
             return
-        return off - s.offset + s.addr
+        return off - section.offset + section.addr
 
     def virt2rva(self, virt):
-        if virt == None:
+        if virt is None:
             return
         return virt - self.NThdr.ImageBase
 
     def rva2virt(self, rva):
-        if rva == None:
+        if rva is None:
             return
         return rva + self.NThdr.ImageBase
 
@@ -464,12 +482,12 @@ class PE(object):
     def off2virt(self, off):
         return self.rva2virt(self.off2rva(off))
 
-    def is_in_virt_address(self, ad):
-        if ad < self.NThdr.ImageBase:
+    def is_in_virt_address(self, addr):
+        if addr < self.NThdr.ImageBase:
             return False
-        ad = self.virt2rva(ad)
-        for s in self.SHList.shlist:
-            if s.addr <= ad < s.addr + s.size:
+        addr = self.virt2rva(addr)
+        for section in self.SHList.shlist:
+            if section.addr <= addr < section.addr + section.size:
                 return True
         return False
 
@@ -489,74 +507,50 @@ class PE(object):
 
     virt = property(get_virt)
 
-    def patch_crc(self, c, olds):
-        s = 0L
-        data = c[:]
-        l = len(data)
-        if len(c) % 2:
-            end = struct.unpack('B', data[-1])[0]
-            data = data[:-1]
-        if (len(c) & ~0x1) % 4:
-            s += struct.unpack('H', data[:2])[0]
-            data = data[2:]
-        data = array.array('I', data)
-        s = reduce(lambda x, y: x + y, data, s)
-        s -= olds
-        while s > 0xFFFFFFFF:
-            s = (s >> 32) + (s & 0xFFFFFFFF)
-        while s > 0xFFFF:
-            s = (s & 0xFFFF) + ((s >> 16) & 0xFFFF)
-        if len(c) % 2:
-            s += end
-        s += l
-        return s
-
     def build_content(self):
 
-        c = StrPatchwork()
-        c[0] = str(self.Doshdr)
+        content = StrPatchwork()
+        content[0] = str(self.Doshdr)
 
-        for s in self.SHList.shlist:
-            c[s.offset:s.offset + s.rawsize] = str(s.data)
+        for section in self.SHList.shlist:
+            content[section.offset:section.offset + section.rawsize] = str(section.data)
 
         # fix image size
-        s_last = self.SHList.shlist[-1]
-        size = s_last.addr + s_last.size + (self.NThdr.sectionalignment - 1)
+        section_last = self.SHList.shlist[-1]
+        size = section_last.addr + section_last.size + (self.NThdr.sectionalignment - 1)
         size &= ~(self.NThdr.sectionalignment - 1)
         self.NThdr.sizeofimage = size
 
         off = self.Doshdr.lfanew
-        c[off] = str(self.NTsig)
+        content[off] = str(self.NTsig)
         off += len(self.NTsig)
-        c[off] = str(self.Coffhdr)
+        content[off] = str(self.Coffhdr)
         off += len(self.Coffhdr)
-        c[off] = str(self.Opthdr)
+        off_shlist = off + self.Coffhdr.sizeofoptionalheader
+        content[off] = str(self.Opthdr)
         off += len(self.Opthdr)
-        c[off] = str(self.NThdr)
+        content[off] = str(self.NThdr)
         off += len(self.NThdr)
-        # c[off] = str(self.Optehdr)
+        # content[off] = str(self.Optehdr)
 
-        off = self.Doshdr.lfanew + \
-            len(self.NTsig) + len(self.Coffhdr) + \
-            self.Coffhdr.sizeofoptionalheader
-        c[off] = str(self.SHList)
+        off = off_shlist
+        content[off] = str(self.SHList)
 
-        for s in self.SHList:
-            if off + len(str(self.SHList)) > s.offset:
+        for section in self.SHList:
+            if off + len(str(self.SHList)) > section.offset:
                 log.warn("section offset overlap pe hdr 0x%x 0x%x" %
-                         (off + len(str(self.SHList)), s.offset))
-        self.DirImport.build_content(c)
-        self.DirExport.build_content(c)
-        self.DirDelay.build_content(c)
-        self.DirReloc.build_content(c)
-        self.DirRes.build_content(c)
-        s = str(c)
+                         (off + len(str(self.SHList)), section.offset))
+        self.DirImport.build_content(content)
+        self.DirExport.build_content(content)
+        self.DirDelay.build_content(content)
+        self.DirReloc.build_content(content)
+        self.DirRes.build_content(content)
+
         if (self.Doshdr.lfanew + len(self.NTsig) + len(self.Coffhdr)) % 4:
             log.warn("non aligned coffhdr, bad crc calculation")
-        crcs = self.patch_crc(s, self.NThdr.CheckSum)
-        c[self.Doshdr.lfanew + len(self.NTsig) + len(
-            self.Coffhdr) + 64] = struct.pack('I', crcs)
-        return str(c)
+        crcs = compute_crc(str(content), self.NThdr.CheckSum)
+        content[self.Doshdr.lfanew + len(self.NTsig) + len(self.Coffhdr) + 64] = struct.pack('I', crcs)
+        return str(content)
 
     def __str__(self):
         return self.build_content()
@@ -567,8 +561,8 @@ class PE(object):
             return None, None
 
         all_func = {}
-        for i, n in enumerate(self.DirExport.f_names):
-            all_func[n.name.name] = self.rva2virt(
+        for i, export in enumerate(self.DirExport.f_names):
+            all_func[export.name.name] = self.rva2virt(
                 self.DirExport.f_address[self.DirExport.f_nameordinals[i].ordinal].rva)
             all_func[self.DirExport.f_nameordinals[i].ordinal + self.DirExport.expdesc.base] = self.rva2virt(
                 self.DirExport.f_address[self.DirExport.f_nameordinals[i].ordinal].rva)
@@ -582,15 +576,15 @@ class PE(object):
         for rel in self.DirReloc.reldesc:
             rva = rel.rva
             for reloc in rel.rels:
-                t, off = reloc.rel
-                if t == 0 and off == 0:
+                reloc_type, off = reloc.rel
+                if reloc_type == 0 and off == 0:
                     continue
-                if t != 3:
-                    raise ValueError('reloc type not impl')
+                if reloc_type != 3:
+                    raise NotImplementedError('Reloc type not supported')
                 off += rva
-                v = struct.unpack('I', self.rva.get(off, off + 4))[0]
-                v += offset
-                self.rva.set(off, struct.pack('I', v & 0xFFFFFFFF))
+                value = struct.unpack('I', self.rva.get(off, off + 4))[0]
+                value += offset
+                self.rva.set(off, struct.pack('I', value & 0xFFFFFFFF))
         self.NThdr.ImageBase = imgbase
 
 
@@ -602,35 +596,34 @@ class Coff(PE):
         self.SHList = SHList(
             self, pe.Coffhdr._size + self.Coffhdr.Coffhdr.sizeofoptionalheader)
 
-        self.Symbols = ClassArray(
-            self, WSymb, self.Coffhdr.Coffhdr.pointertosymboltable, self.Coffhdr.Coffhdr.numberofsymbols)
+        self.Symbols = ClassArray(self, WSymb,
+                                  self.Coffhdr.Coffhdr.pointertosymboltable,
+                                  self.Coffhdr.Coffhdr.numberofsymbols)
 
 
 if __name__ == "__main__":
-    import rlcompleter
     import readline
     import pdb
     import sys
-    from pprint import pprint as pp
     readline.parse_and_bind("tab: complete")
 
-    e = PE(open(sys.argv[1]).read())
-    print repr(e.DirImport)
-    print repr(e.DirExport)
-    print repr(e.DirDelay)
-    print repr(e.DirReloc)
-    print repr(e.DirRes)
+    pe_obj = PE(open(sys.argv[1]).read())
+    print repr(pe_obj.DirImport)
+    print repr(pe_obj.DirExport)
+    print repr(pe_obj.DirDelay)
+    print repr(pe_obj.DirReloc)
+    print repr(pe_obj.DirRes)
 
     # XXX patch boundimport /!\
-    e.NThdr.optentries[pe.DIRECTORY_ENTRY_BOUND_IMPORT].rva = 0
-    e.NThdr.optentries[pe.DIRECTORY_ENTRY_BOUND_IMPORT].size = 0
+    pe_obj.NThdr.optentries[pe.DIRECTORY_ENTRY_BOUND_IMPORT].rva = 0
+    pe_obj.NThdr.optentries[pe.DIRECTORY_ENTRY_BOUND_IMPORT].size = 0
 
-    s_redir = e.SHList.add_section(name="redir", rawsize=0x1000)
-    s_test = e.SHList.add_section(name="test", rawsize=0x1000)
-    s_rel = e.SHList.add_section(name="rel", rawsize=0x5000)
+    section_redir = pe_obj.SHList.add_section(name="redir", rawsize=0x1000)
+    section_test = pe_obj.SHList.add_section(name="test", rawsize=0x1000)
+    section_rel = pe_obj.SHList.add_section(name="rel", rawsize=0x5000)
 
     new_dll = [({"name": "kernel32.dll",
-                 "firstthunk": s_test.addr},
+                 "firstthunk": section_test.addr},
                 ["CreateFileA",
                  "SetFilePointer",
                  "WriteFile",
@@ -645,37 +638,37 @@ if __name__ == "__main__":
                  ]
                 )
                ]
-    e.DirImport.add_dlldesc(new_dll)
+    pe_obj.DirImport.add_dlldesc(new_dll)
 
-    if e.DirExport.expdesc is None:
-        e.DirExport.create()
-        e.DirExport.add_name("coco")
+    if pe_obj.DirExport.expdesc is None:
+        pe_obj.DirExport.create()
+        pe_obj.DirExport.add_name("coco")
 
-    s_myimp = e.SHList.add_section(name="myimp", rawsize=len(e.DirImport))
-    s_myexp = e.SHList.add_section(name="myexp", rawsize=len(e.DirExport))
-    s_mydel = e.SHList.add_section(name="mydel", rawsize=len(e.DirDelay))
-    s_myrel = e.SHList.add_section(name="myrel", rawsize=len(e.DirReloc))
-    s_myres = e.SHList.add_section(name="myres", rawsize=len(e.DirRes))
+    section_myimp = pe_obj.SHList.add_section(name="myimp", rawsize=len(pe_obj.DirImport))
+    section_myexp = pe_obj.SHList.add_section(name="myexp", rawsize=len(pe_obj.DirExport))
+    section_mydel = pe_obj.SHList.add_section(name="mydel", rawsize=len(pe_obj.DirDelay))
+    section_myrel = pe_obj.SHList.add_section(name="myrel", rawsize=len(pe_obj.DirReloc))
+    section_myres = pe_obj.SHList.add_section(name="myres", rawsize=len(pe_obj.DirRes))
 
     """
-    for s in e.SHList.shlist:
-        s.offset+=0xC00
+    for section in pe_obj.SHList.shlist:
+        section.offset+=0xC00
     """
 
-    e.SHList.align_sections(0x1000, 0x1000)
+    pe_obj.SHList.align_sections(0x1000, 0x1000)
 
-    e.DirImport.set_rva(s_myimp.addr)
-    e.DirExport.set_rva(s_myexp.addr)
-    if e.DirDelay.delaydesc:
-        e.DirDelay.set_rva(s_mydel.addr)
-    if e.DirReloc.reldesc:
-        e.DirReloc.set_rva(s_myrel.addr)
-    if e.DirRes.resdesc:
-        e.DirRes.set_rva(s_myres.addr)
+    pe_obj.DirImport.set_rva(section_myimp.addr)
+    pe_obj.DirExport.set_rva(section_myexp.addr)
+    if pe_obj.DirDelay.delaydesc:
+        pe_obj.DirDelay.set_rva(section_mydel.addr)
+    if pe_obj.DirReloc.reldesc:
+        pe_obj.DirReloc.set_rva(section_myrel.addr)
+    if pe_obj.DirRes.resdesc:
+        pe_obj.DirRes.set_rva(section_myres.addr)
 
-    e_str = str(e)
-    print "f1", e.DirImport.get_funcvirt('LoadStringW')
-    print "f2", e.DirExport.get_funcvirt('SetUserGeoID')
+    e_str = str(pe_obj)
+    print "f1", pe_obj.DirImport.get_funcvirt('LoadStringW')
+    print "f2", pe_obj.DirExport.get_funcvirt('SetUserGeoID')
     open('out.bin', 'wb').write(e_str)
     # o = Coff(open('main.obj').read())
     # print repr(o.Coffhdr)
