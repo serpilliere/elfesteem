@@ -5,9 +5,12 @@ from sys import maxsize
 class StrPatchwork:
 
     def __init__(self, s="", paddingbyte="\x00"):
-        self.s = array("B", str(s))
+        s_raw = str(s)
+        val = array("B")
+        val.fromstring(s_raw)
+        self.s = val
         # cache s to avoid rebuilding str after each find
-        self.s_cache = s
+        self.s_cache = s_raw
         self.paddingbyte = paddingbyte
 
     def __str__(self):
@@ -22,7 +25,10 @@ class StrPatchwork:
                 # This is inefficient but avoids complicated maths if step is
                 # not 1
                 s = s[:]
-                s.extend(array("B", self.paddingbyte * (end - l)))
+
+                tmp = array("B")
+                tmp.fromstring(self.paddingbyte * (end - l))
+                s.extend(tmp)
             r = s[item]
             return r.tostring()
 
@@ -35,14 +41,17 @@ class StrPatchwork:
     def __setitem__(self, item, val):
         if val == None:
             return
-        val = array("B", val)
+        val_array = array("B")
+        val_array.fromstring(str(val))
         if type(item) is not slice:
-            item = slice(item, item + len(val))
+            item = slice(item, item + len(val_array))
         end = item.stop
         l = len(self.s)
         if l < end:
-            self.s.extend(array("B", self.paddingbyte * (end - l)))
-        self.s[item] = val
+            tmp = array("B")
+            tmp.fromstring(self.paddingbyte * (end - l))
+            self.s.extend(tmp)
+        self.s[item] = val_array
         self.s_cache = None
 
     def __repr__(self):
@@ -55,7 +64,9 @@ class StrPatchwork:
         return val in str(self)
 
     def __iadd__(self, other):
-        self.s.extend(array("B", other))
+        tmp = array("B")
+        tmp.fromstring(str(other))
+        self.s.extend(tmp)
         return self
 
     def find(self, pattern, start=0, end=None):
