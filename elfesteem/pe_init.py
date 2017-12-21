@@ -347,7 +347,7 @@ class PE(object):
             if rounded_size > virt_size:
                 rounded_size = min(rounded_size, section.size)
             data = self.content[raw_off:raw_off + rounded_size]
-            section.data[0] = data
+            section.data = data
             # Pad data to page size 0x1000
             length = len(data)
             data += "\x00" * ((((length + 0xfff)) & 0xFFFFF000) - length)

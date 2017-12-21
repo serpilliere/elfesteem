@@ -133,6 +133,18 @@ class Shdr(CStruct):
                ("flags", "u32")]
 
 
+    def get_data(self):
+        parent = self.parent_head
+        data = parent.img_rva[self.addr:self.addr + self.size]
+        return data
+
+    def set_data(self, data):
+        parent = self.parent_head
+        parent.img_rva[self.addr] = data
+
+
+    data = property(get_data, set_data)
+
 class SHList(CStruct):
     _fields = [
         ("shlist", "Shdr", lambda c:c.parent_head.Coffhdr.numberofsections)]
@@ -172,14 +184,14 @@ class SHList(CStruct):
                  "data": data
         }
         attrs.update(args)
-        section = Shdr(_sex=self.parent_head._sex,
+        section = Shdr(self.parent_head, _sex=self.parent_head._sex,
                  _wsize=self.parent_head._wsize, **attrs)
         section.data = data
 
         if section.rawsize > len(data):
             section.data = section.data + '\x00' * (section.rawsize - len(data))
             section.size = section.rawsize
-        section.data = StrPatchwork(section.data)
+        section.data = str(StrPatchwork(section.data))
         section.size = max(s_align, section.size)
 
         self.append(section)
