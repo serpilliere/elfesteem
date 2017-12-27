@@ -424,7 +424,8 @@ class PE(object):
             some binaries have import rva outside section, but addresses
             seems to be rounded
             """
-            if section.addr <= rva < (section.addr + section.size + 0xfff) & 0xFFFFF000:
+            mask = self.NThdr.sectionalignment - 1
+            if section.addr <= rva < (section.addr + section.size + mask) & ~(mask):
                 return section
         return None
 
