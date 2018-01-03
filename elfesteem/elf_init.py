@@ -356,7 +356,7 @@ class StrTable(Section):
             # c = c[p+1:]
 
     def get_name(self, ofs):
-        n = self.content[ofs:self.content.find('\x00', offset=ofs)]
+        n = self.content[ofs:self.content.find('\x00', start=ofs)]
         return n
 
     def add_name(self, name):
@@ -726,7 +726,7 @@ class virt(object):
     def is_addr_in(self, ad):
         return self.parent.is_in_virt_address(ad)
 
-    def find(self, pattern, offset=0):
+    def find(self, pattern, start=0):
         sections = []
         for s in self.parent.ph:
             s_max = s.ph.memsz  # max(s.ph.filesz, s.ph.memsz)
