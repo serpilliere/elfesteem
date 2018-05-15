@@ -1349,7 +1349,11 @@ class DirRes(CStruct):
             of1, my_dir = dir_todo.popitem()
             dir_done[of1] = my_dir
             raw[self.parent_head.rva2off(of1)] = str(my_dir)
+            of1 += len(my_dir)
+            of_base = of1
             for entry in my_dir.resentries:
+                raw[of_base] = str(entry)
+                of_base += len(entry)
                 if entry.name_s:
                     raw[self.parent_head.rva2off(entry.name)] = str(entry.name_s)
                 of1 = entry.offsettosubdir
@@ -1400,11 +1404,9 @@ class DirRes(CStruct):
             return
         self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_RESOURCE].rva = rva
         if not size:
-            self.parent_head.NThdr.optentries[
-                DIRECTORY_ENTRY_RESOURCE].size = len(self)
+            self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_RESOURCE].size = len(self)
         else:
-            self.parent_head.NThdr.optentries[
-                DIRECTORY_ENTRY_RESOURCE].size = size
+            self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_RESOURCE].size = size
         dir_todo = [self.resdesc]
         dir_done = {}
         while dir_todo:
