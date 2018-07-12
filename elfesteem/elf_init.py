@@ -143,6 +143,10 @@ class WPhdr64(StructWrapper):
     wrapped = elf.Phdr64
 
 
+class WNhdr(StructWrapper):
+    wrapped = elf.Nhdr
+
+
 class ContentManager(object):
 
     def __get__(self, owner, x):
@@ -300,14 +304,16 @@ class NoteSection(Section):
     def parse_content(self, sex, size):
         self.sex, self.size = sex, size
         c = self.content
+        hsz = 12
         self.notes = []
         # XXX: c may not be aligned?
-        while len(c) > 12:
-            namesz, descsz, typ = struct.unpack("III", c[:12])
-            name = c[12:12 + namesz]
-            desc = c[12 + namesz:12 + namesz + descsz]
-            c = c[12 + namesz + descsz:]
-            self.notes.append((typ, name, desc))
+        while len(c) > hsz:
+            note = WNhdr(self, sex, size, c)
+            namesz, descsz = note.namesz, note.descsz
+            name = c[hsz:hsz + namesz]
+            desc = c[hsz + namesz:hsz + namesz + descsz]
+            c = c[hsz + namesz + descsz:]
+            self.notes.append((note.type, name, desc))
 
 
 class Dynamic(Section):
