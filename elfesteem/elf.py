@@ -51,6 +51,11 @@ class Phdr64(CStruct):
                 ("memsz","ptr"),
                 ("align","ptr") ]
 
+class Nhdr(CStruct):
+    _fields = [ ("namesz","u32"),
+                ("descsz","u32"),
+                ("type", "u32") ]
+
 
 class Sym32(CStruct):
     _fields = [ ("name","u32"),
