@@ -351,6 +351,7 @@ STT_COMMON      = 5               # Symbol is a common data object
 STT_TLS         = 6               # Symbol is thread-local data object*/
 STT_NUM         = 7               # Number of defined types.
 STT_LOOS        = 10              # Start of OS-specific
+STT_GNU_IFUNC   = 10              # Symbol is indirect code object
 STT_HIOS        = 12              # End of OS-specific
 STT_LOPROC      = 13              # Start of processor-specific
 STT_HIPROC      = 15              # End of processor-specific
@@ -489,6 +490,10 @@ DTF_1_CONFEXP   = 0x00000002
 DF_P1_LAZYLOAD  = 0x00000001      # Lazyload following object.
 DF_P1_GROUPPERM = 0x00000002      # Symbols from next object are not generally available.
 
+# GNU Versionning
+VER_FLG_BASE     = 1              # Version of the file itself, must not be used to match symbols
+VER_FLG_WEAK     = 2              # Reference to this version is weak
+VER_NEED_CURRENT = 1              # Versionning implementation number
 
 # Relocs 
 
