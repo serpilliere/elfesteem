@@ -734,6 +734,7 @@ class virt(object):
 
     def find(self, pattern, start=0):
         sections = []
+        offset = start
         for s in self.parent.ph:
             s_max = s.ph.memsz  # max(s.ph.filesz, s.ph.memsz)
             if offset < s.ph.vaddr + s_max:
