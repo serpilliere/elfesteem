@@ -1,13 +1,17 @@
 #! /usr/bin/env python
 """Minidump to PE example"""
+
 import sys
+
+from future.utils import viewvalues
+
 from elfesteem.minidump_init import Minidump
 from elfesteem.pe_init import PE
 
-minidump = Minidump(open(sys.argv[1]).read())
+minidump = Minidump(open(sys.argv[1], 'rb').read())
 
 pe = PE()
-for i, memory in enumerate(sorted(minidump.memory.itervalues(),
+for i, memory in enumerate(sorted(viewvalues(minidump.memory),
                                   key=lambda x:x.address)):
     # Get section name
     name = str(memory.name)
@@ -34,7 +38,11 @@ for i, memory in enumerate(sorted(minidump.memory.itervalues(),
                           data=memory.content, flags=protect_mask)
 
 # Find entry point
-entry_point = minidump.threads.Threads[0].ThreadContext.Eip[0]
+try:
+    entry_point = minidump.threads.Threads[0].ThreadContext.Eip[0]
+except AttributeError:
+    entry_point = minidump.threads.Threads[0].ThreadContext.Rip[0]
+
 pe.Opthdr.AddressOfEntryPoint = entry_point
 
-open("out_pe.bin", "w").write(str(pe))
+open("out_pe.bin", "wb").write(bytes(pe))

@@ -11,7 +11,7 @@ readline.parse_and_bind("tab: complete")
 
 
 e_ = PE()
-mysh = "\xc3"
+mysh = b"\xc3"
 s_text = e_.SHList.add_section(
     name="text", addr=0x1000, rawsize=0x1000, data=mysh)
 e_.Opthdr.AddressOfEntryPoint = s_text.addr
@@ -28,4 +28,4 @@ e_.DirImport.add_dlldesc(new_dll)
 
 s_myimp = e_.SHList.add_section(name="myimp", rawsize=0x1000)
 e_.DirImport.set_rva(s_myimp.addr)
-open('uu.bin', 'wb').write(str(e_))
+open('uu.bin', 'wb').write(bytes(e_))

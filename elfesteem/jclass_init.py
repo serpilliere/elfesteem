@@ -2,11 +2,15 @@
 
 import struct
 import array
-from strpatchwork import StrPatchwork
-from new_cstruct import CStruct
 import logging
 from collections import defaultdict
 from pprint import pprint as pp
+
+from future.utils import PY3, viewitems
+
+from elfesteem.strpatchwork import StrPatchwork
+from elfesteem.new_cstruct import CStruct
+
 log = logging.getLogger("classparse")
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter("%(levelname)-5s: %(message)s"))
@@ -63,7 +67,7 @@ class CPUtf8(CStruct):
         return v, of + self.length
 
     def sets(self, value):
-        return str(value)
+        return bytes(value)
 
     def set_str(self, s):
         self.length = len(s)
@@ -106,7 +110,7 @@ class CPClass(CStruct):
         return self.parent_head.get_constant_pool_by_index(self.name_value).value
 
     def pp(self):
-        return "%r" % (self.name)
+        return repr(self.name)
 
 
 class CPString(CStruct):
@@ -127,7 +131,7 @@ class CPString(CStruct):
         if len(s) > 40:
             s = str(s)[:40]+'...'
         """
-        return "%r" % (s)
+        return repr(s)
 
 
 class CPFieldref(CStruct):
@@ -287,7 +291,8 @@ CONSTANT_TYPES = {
     12: CPNameandType,
 }
 
-CONSTANT_TYPES_inv = dict([(x[1], x[0]) for x in CONSTANT_TYPES.items()])
+CONSTANT_TYPES_inv = dict((value, key)
+                          for key, value in viewitems(CONSTANT_TYPES))
 
 
 class CPoolfield(CStruct):
@@ -296,7 +301,7 @@ class CPoolfield(CStruct):
 
     @classmethod
     def unpack_l(cls, s, off=0, parent_head=None, _sex=1, _wsize=32):
-        tag = ord(s[off])
+        tag = struct.unpack('B', s[off:off+1])[0]
         if not tag in CONSTANT_TYPES:
             raise ValueError('unknown type', hex(tag))
         c, l = CONSTANT_TYPES[tag].unpack_l(s, off, parent_head, _sex, _wsize)
@@ -339,7 +344,7 @@ class CAttribute_code(CStruct):
         return v, of + self.code_length
 
     def setcode(self, value):
-        return str(value)
+        return bytes(value)
 
     def get_name(self):
         return self.parent_head.get_constant_pool_by_index(self.name_value).value
@@ -447,7 +452,7 @@ class CAttributeInfo_default(CStruct):
         return v, of + self.attribute_length
 
     def setcode(self, value):
-        return str(value)
+        return bytes(value)
 
 
 class CAttributeInfo(CStruct):
@@ -461,7 +466,7 @@ class CAttributeInfo(CStruct):
         c = parent_head.get_constant_pool_by_index(tag)
         if not isinstance(c, CPUtf8):
             raise ValueError('Error in parsing, should be string', hex(tag))
-        name = c.value
+        name = c.value.decode()
         if name == "Code":
             c, l = CAttribute_code.unpack_l(s, off, parent_head, _sex, _wsize)
         elif name == "LineNumberTable":
@@ -477,7 +482,8 @@ class CAttributeInfo(CStruct):
         else:
             log.warning("unsupported attribute, skipping:\n%r" % (c))
             c, l = CAttributeInfo_default.unpack_l(
-                s, off, parent_head, _sex, _wsize)
+                s, off, parent_head, _sex, _wsize
+            )
         return c, l
 
     @classmethod
@@ -541,7 +547,7 @@ class Jclass_hdr(CStruct):
         return v, of
 
     def sets(self, value):
-        out = "".join([str(x) for x in value if x != None])
+        out = b"".join(bytes(x) for x in value if x != None)
         return out
 
 
@@ -590,11 +596,13 @@ class JCLASS(object):
         self.description = Jclass_description.unpack(
             self.content, l, self, self)
 
+    def __bytes__(self):
+        return b"%s%s" % (self.hdr, self.description)
+
     def __str__(self):
-        out = ''
-        out += str(self.hdr)
-        out += str(self.description)
-        return out
+        if PY3:
+            return repr(self)
+        return self.__bytes__(self)
 
     def add_constant(self, c):
         self.hdr.constants_pool.append(c)
@@ -663,5 +671,6 @@ class JCLASS(object):
 if __name__ == "__main__":
     import sys
     from pprint import pprint as pp
-    data = open(sys.argv[1]).read()
+    data = open(sys.argv[1], "rb").read()
     e = JCLASS(data)
+    print(repr(e))

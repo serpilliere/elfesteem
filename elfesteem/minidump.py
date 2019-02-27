@@ -1,6 +1,8 @@
 """Constants and structures associated to Minidump format
 Based on: http://amnesia.gtisc.gatech.edu/~moyix/minidump.py
 """
+from future.utils import viewitems
+
 from elfesteem.new_cstruct import CStruct
 
 class Enumeration(object):
@@ -9,11 +11,11 @@ class Enumeration(object):
     def __init__(self, enum_info):
         """enum_info: {name: value}"""
         self._enum_info = enum_info
-        self._inv_info = dict((v, k) for k, v in enum_info.iteritems())
+        self._inv_info = dict((v, k) for k, v in viewitems(enum_info))
 
     def __getitem__(self, key):
         """Helper: assume that string is for key, integer is for value"""
-        if isinstance(key, (int, long)):
+        if isinstance(key, int):
             return self._inv_info[key]
         return self._enum_info[key]
 

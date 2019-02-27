@@ -1,12 +1,13 @@
 #! /usr/bin/env python
 
+from __future__ import print_function
 import sys
 import getopt
 from elfesteem import ELF
 
 
 def usage():
-    print >>sys.stderr,"Usage: elfcli [-i inputfile]"
+    print("Usage: elfcli [-i inputfile]", file=sys.stderr)
     raise SystemExit
 
 def main(*args):
@@ -18,8 +19,8 @@ def main(*args):
                 usage()
             if opt == "-i":
                 INPUT = open(optarg)
-    except getopt.GetoptError,e:
-        print >>sys.stderr,"ERROR: %s" % e
+    except getopt.GetoptError as e:
+        print("ERROR: %s" % e, file=sys.stderr)
         raise SystemExit
     
 

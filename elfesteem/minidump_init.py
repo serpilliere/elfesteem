@@ -1,8 +1,11 @@
 """
 High-level abstraction of Minidump file
 """
-from strpatchwork import StrPatchwork
-import minidump as mp
+from builtins import range
+import struct
+
+from elfesteem.strpatchwork import StrPatchwork
+from elfesteem import minidump as mp
 
 
 class MemorySegment(object):
@@ -29,12 +32,14 @@ class MemorySegment(object):
 
     @property
     def name(self):
-        if self.module:
-            name = mp.MinidumpString.unpack(self.minidump._content,
-                                            self.module.ModuleNameRva.rva,
-                                            self.minidump)
-            return "".join(chr(x) for x in name.Buffer).decode("utf-16")
-        return ""
+        if not self.module:
+            return ""
+        name = mp.MinidumpString.unpack(self.minidump._content,
+                                        self.module.ModuleNameRva.rva,
+                                        self.minidump)
+        return b"".join(
+            struct.pack("B", x) for x in name.Buffer
+        ).decode("utf-16")
 
     @property
     def content(self):
@@ -96,13 +101,15 @@ class Minidump(object):
 
         # Streams
         base_offset = self.minidumpHDR.StreamDirectoryRva.rva
-        empty_stream = mp.StreamDirectory(StreamType=0,
-                                          Location=mp.LocationDescriptor(DataSize=0,
-                                                                         Rva=mp.Rva(rva=0)
-                                          )
+        empty_stream = mp.StreamDirectory(
+            StreamType=0,
+            Location=mp.LocationDescriptor(
+                DataSize=0,
+                Rva=mp.Rva(rva=0)
+            )
         )
         streamdir_size = len(empty_stream)
-        for i in xrange(self.minidumpHDR.NumberOfStreams):
+        for i in range(self.minidumpHDR.NumberOfStreams):
             stream_offset = base_offset + i * streamdir_size
             stream = mp.StreamDirectory.unpack(self._content, stream_offset, self)
             self.streams.append(stream)
@@ -176,7 +183,7 @@ class Minidump(object):
             if virt_start <= addr <= virt_stop:
                 break
         else:
-            return ""
+            return b""
 
         memory = self.memory[addr]
         shift = addr - virt_start

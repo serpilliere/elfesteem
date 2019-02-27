@@ -1,10 +1,17 @@
 #! /usr/bin/env python
 
+from __future__ import print_function
+from builtins import range, str
+from collections import defaultdict
+import logging
+import struct
+
+from future.builtins import int as int_types
+from future.utils import PY3
+
 from elfesteem.new_cstruct import CStruct
 from elfesteem.strpatchwork import StrPatchwork
-import struct
-import logging
-from collections import defaultdict
+
 log = logging.getLogger("pepy")
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter("%(levelname)-5s: %(message)s"))
@@ -63,7 +70,7 @@ def get_optehdr_num(nthdr):
     parent = nthdr.parent_head
     entry_size = 8
     if parent.Coffhdr.sizeofoptionalheader < numberofrva * entry_size + len(parent.Opthdr):
-        numberofrva = (parent.Coffhdr.sizeofoptionalheader - len(parent.Opthdr)) / entry_size
+        numberofrva = (parent.Coffhdr.sizeofoptionalheader - len(parent.Opthdr)) // entry_size
         log.warn('Bad number of rva.. using default %d' % numberofrva)
         numberofrva = 0x10
     return numberofrva
@@ -149,7 +156,7 @@ class SHList(CStruct):
     _fields = [
         ("shlist", "Shdr", lambda c:c.parent_head.Coffhdr.numberofsections)]
 
-    def add_section(self, name="default", data="", **args):
+    def add_section(self, name="default", data=b"", **args):
         s_align = self.parent_head.NThdr.sectionalignment
         s_align = max(0x1000, s_align)
 
@@ -165,9 +172,9 @@ class SHList(CStruct):
                     s_last = section
             offset = s_last.offset + s_last.rawsize
         else:
-            s_null = str(Shdr.unpack(0x100 * "\x00"))
+            s_null = bytes(Shdr.unpack(b"\x00" * 0x100))
             offset = self.parent_head.Doshdr.lfanew + len(self.parent_head.NTsig) + len(
-                self.parent_head.Coffhdr) + self.parent_head.Coffhdr.sizeofoptionalheader + len(str(self.parent_head.SHList) + s_null)
+                self.parent_head.Coffhdr) + self.parent_head.Coffhdr.sizeofoptionalheader + len(bytes(self.parent_head.SHList) + s_null)
             addr = 0x2000
         # round addr
         addr = (addr + (s_align - 1)) & ~(s_align - 1)
@@ -189,9 +196,9 @@ class SHList(CStruct):
         section.data = data
 
         if section.rawsize > len(data):
-            section.data = section.data + '\x00' * (section.rawsize - len(data))
+            section.data = section.data + b'\x00' * (section.rawsize - len(data))
             section.size = section.rawsize
-        section.data = str(StrPatchwork(section.data))
+        section.data = bytes(StrPatchwork(section.data))
         section.size = max(s_align, section.size)
 
         self.append(section)
@@ -214,7 +221,7 @@ class SHList(CStruct):
 
         addr = self[0].offset
         for section in self:
-            raw_off = f_align * ((addr + f_align - 1) / f_align)
+            raw_off = f_align * ((addr + f_align - 1) // f_align)
             section.offset = raw_off
             section.rawsize = len(section.data)
             addr = raw_off + section.rawsize
@@ -222,7 +229,7 @@ class SHList(CStruct):
     def __repr__(self):
         rep = ["#  section         offset   size   addr     flags   rawsize  "]
         for i, section in enumerate(self):
-            out = "%-15s" % section.name.strip('\x00')
+            out = "%-15s" % section.name.strip(b'\x00').decode()
             out += "%(offset)08x %(size)06x %(addr)08x %(flags)08x %(rawsize)08x" % section
             out = ("%2i " % i) + out
             rep.append(out)
@@ -249,16 +256,16 @@ class Rva32(CStruct):
 
 
 class DescName(CStruct):
-    _fields = [("name", (lambda c, raw, off:c.gets(raw, off),
-                         lambda c, value:c.sets(value)))
+    _fields = [("name", (lambda c, raw, off: c.gets(raw, off),
+                         lambda c, value: c.sets(value)))
                ]
 
     def gets(self, raw, off):
-        name = raw[off:raw.find('\x00', off)]
+        name = raw[off:raw.find(b'\x00', off)]
         return name, off + len(name) + 1
 
     def sets(self, value):
-        return str(value) + "\x00"
+        return bytes(value) + b"\x00"
 
 
 class ImportByName(CStruct):
@@ -292,18 +299,23 @@ class struct_array(object):
                                           target_class.parent_head._sex,
                                           target_class.parent_head._wsize)
             if num == None:
-                if raw[off:off + length] == '\x00' * length:
-                    self.end = '\x00' * length
+                if raw[off:off + length] == b'\x00' * length:
+                    self.end = b'\x00' * length
                     break
             self.l.append(entry)
             off += length
             i += 1
 
-    def __str__(self):
-        out = "".join([str(x) for x in self.l])
-        if self.end != None:
+    def __bytes__(self):
+        out = b"".join(bytes(x) for x in self.l)
+        if self.end is not None:
             out += self.end
         return out
+
+    def __str__(self):
+        if PY3:
+            return repr(self)
+        return self.__bytes__()
 
     def __getitem__(self, item):
         return self.l.__getitem__(item)
@@ -328,7 +340,7 @@ class DirImport(CStruct):
         if self.parent_head._wsize == 32:
             mask_ptr = 0x80000000
         elif self.parent_head._wsize == 64:
-            mask_ptr = 0x8000000000000000L
+            mask_ptr = 0x8000000000000000
 
         ofend = off + \
                 self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_IMPORT].size
@@ -337,7 +349,7 @@ class DirImport(CStruct):
             if not 0 <= off < len(self.parent_head.img_rva):
                 break
             imp, length = ImpDesc_e.unpack_l(raw, off)
-            if (raw[off:off+length] == '\x00'*length or
+            if (raw[off:off+length] == b'\x00' * length or
                 imp.name == 0):
                 # Special case
                 break
@@ -366,7 +378,7 @@ class DirImport(CStruct):
                 tmp_thunk = imp.originalfirstthunks
             elif imp.firstthunk:
                 tmp_thunk = imp.firstthunks
-            for i in xrange(len(tmp_thunk)):
+            for i in range(len(tmp_thunk)):
                 if tmp_thunk[i].rva & mask_ptr == 0:
                     try:
                         entry = ImportByName.unpack(raw,
@@ -374,7 +386,8 @@ class DirImport(CStruct):
                                                     self.parent_head)
                     except:
                         log.warning(
-                            'cannot import from add %s' % str(tmp_thunk[i].rva))
+                            'cannot import from add %s' % tmp_thunk[i].rva
+                        )
                         entry = 0
                     imp.impbynames.append(entry)
                 else:
@@ -382,12 +395,11 @@ class DirImport(CStruct):
         return out, off
 
     def sete(self, entries):
-        raw = "".join([str(entry) for entry in entries]) + "\x00" * (4 * 5)  # ImdDesc_e
-        return raw
+        return b"".join(bytes(entry) for entry in entries) + b"\x00" * (4 * 5)
 
     def __len__(self):
         length = (len(self.impdesc) + 1) * (5 * 4)  # ImpDesc_e size
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         for entry in self.impdesc:
             length += len(entry.dlldescname)
             if entry.originalfirstthunk and self.parent_head.rva2off(entry.originalfirstthunk):
@@ -401,7 +413,7 @@ class DirImport(CStruct):
 
     def set_rva(self, rva, size=None):
         self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_IMPORT].rva = rva
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         if not size:
             self.parent_head.NThdr.optentries[
                 DIRECTORY_ENTRY_IMPORT].size = len(self)
@@ -418,7 +430,7 @@ class DirImport(CStruct):
             # XXX rva fthunk not patched => keep original func addr
             # if entry.firstthunk:
             #    entry.firstthunk = rva
-            # rva+=(len(entry.firstthunks)+1)*self.parent_head._wsize/8 # Rva size
+            # rva+=(len(entry.firstthunks)+1)*self.parent_head._wsize//8 # Rva size
             if entry.originalfirstthunk and entry.firstthunk:
                 if isinstance(entry.originalfirstthunk, struct_array):
                     tmp_thunk = entry.originalfirstthunks
@@ -447,18 +459,18 @@ class DirImport(CStruct):
         of1 = dirimp.rva
         if not of1:  # No Import
             return
-        raw[self.parent_head.rva2off(of1)] = str(self)
+        raw[self.parent_head.rva2off(of1)] = bytes(self)
         for entry in self.impdesc:
-            raw[self.parent_head.rva2off(entry.name)] = str(entry.dlldescname)
+            raw[self.parent_head.rva2off(entry.name)] = bytes(entry.dlldescname)
             if (entry.originalfirstthunk and
                 self.parent_head.rva2off(entry.originalfirstthunk)):
                 # Add thunks list and terminating null entry
                 off = self.parent_head.rva2off(entry.originalfirstthunk)
-                raw[off] = str(entry.originalfirstthunks)
+                raw[off] = bytes(entry.originalfirstthunks)
             if entry.firstthunk:
                 # Add thunks list and terminating null entry
                 off = self.parent_head.rva2off(entry.firstthunk)
-                raw[off] = str(entry.firstthunks)
+                raw[off] = bytes(entry.firstthunks)
             if (entry.originalfirstthunk and
                 self.parent_head.rva2off(entry.originalfirstthunk)):
                 tmp_thunk = entry.originalfirstthunks
@@ -468,7 +480,7 @@ class DirImport(CStruct):
                 raise RuntimeError("No thunk!")
             for j, imp in enumerate(entry.impbynames):
                 if isinstance(imp, ImportByName):
-                    raw[self.parent_head.rva2off(tmp_thunk[j].rva)] = str(imp)
+                    raw[self.parent_head.rva2off(tmp_thunk[j].rva)] = bytes(imp)
 
     def get_dlldesc(self):
         out = []
@@ -495,14 +507,20 @@ class DirImport(CStruct):
         return "\n".join(rep)
 
     def add_dlldesc(self, new_dll):
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         if self.parent_head._wsize == 32:
             mask_ptr = 0x80000000
         elif self.parent_head._wsize == 64:
-            mask_ptr = 0x8000000000000000L
+            mask_ptr = 0x8000000000000000
         new_impdesc = []
         of1 = None
         for import_descriptor, new_functions in new_dll:
+            if isinstance(import_descriptor.get("name"), str):
+                import_descriptor["name"] = import_descriptor["name"].encode()
+            new_functions = [
+                funcname.encode() if isinstance(funcname, str) else funcname
+                for funcname in new_functions
+            ]
             for attr in ["timestamp", "forwarderchain", "originalfirstthunk"]:
                 if attr not in import_descriptor:
                     import_descriptor[attr] = 0
@@ -510,7 +528,7 @@ class DirImport(CStruct):
             if entry.firstthunk != None:
                 of1 = entry.firstthunk
             elif of1 == None:
-                raise "set fthunk"
+                raise RuntimeError("set fthunk")
             else:
                 entry.firstthunk = of1
             entry.dlldescname = DescName(self.parent_head, name=entry.name)
@@ -525,16 +543,16 @@ class DirImport(CStruct):
             impbynames = []
             for new_function in new_functions:
                 rva_ofirstt = Rva(self.parent_head)
-                if type(new_function) in [int, long]:
+                if isinstance(new_function, int_types):
                     rva_ofirstt.rva = mask_ptr + new_function
                     ibn = new_function
-                elif type(new_function) in [str]:
+                elif isinstance(new_function, bytes):
                     rva_ofirstt.rva = True
                     ibn = ImportByName(self.parent_head)
                     ibn.name = new_function
                     ibn.hint = 0
                 else:
-                    raise 'unknown func type %s' % str(new_function)
+                    raise RuntimeError('unknown func type %s' % new_function)
                 impbynames.append(ibn)
                 entry.originalfirstthunks.append(rva_ofirstt)
                 rva_func = Rva(self.parent_head)
@@ -559,11 +577,19 @@ class DirImport(CStruct):
                 self.impdesc.append(entry)
 
     def get_funcrva(self, dllname, funcname):
-        rva_size = self.parent_head._wsize / 8
+        try:
+            dllname = dllname.encode()
+        except AttributeError:
+            pass
+        try:
+            funcname = funcname.encode()
+        except AttributeError:
+            pass
+        rva_size = self.parent_head._wsize // 8
         if self.parent_head._wsize == 32:
             mask_ptr = 0x80000000 - 1
         elif self.parent_head._wsize == 64:
-            mask_ptr = 0x8000000000000000L - 1
+            mask_ptr = 0x8000000000000000 - 1
 
         for entry in self.impdesc:
             if entry.dlldescname.name.lower() != dllname.lower():
@@ -574,12 +600,12 @@ class DirImport(CStruct):
                 tmp_thunk = entry.firstthunks
             else:
                 raise RuntimeError("No thunk!")
-            if type(funcname) is str:
+            if isinstance(funcname, bytes):
                 for j, imp in enumerate(entry.impbynames):
                     if isinstance(imp, ImportByName):
                         if funcname == imp.name:
                             return entry.firstthunk + j * rva_size
-            elif type(funcname) in (int, long):
+            elif isinstance(funcname, int_types):
                 for j, imp in enumerate(entry.impbynames):
                     if not isinstance(imp, ImportByName):
                         if tmp_thunk[j].rva & mask_ptr == funcname:
@@ -648,23 +674,22 @@ class DirExport(CStruct):
         return expdesc, off_sav
 
     def sete(self, _):
-        raw = str(self.expdesc)
-        return raw
+        return bytes(self.expdesc)
 
     def build_content(self, raw):
         direxp = self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_EXPORT]
         of1 = direxp.rva
         if self.expdesc is None:  # No Export
             return
-        raw[self.parent_head.rva2off(of1)] = str(self.expdesc)
-        raw[self.parent_head.rva2off(self.expdesc.name)] = str(self.dlldescname)
-        raw[self.parent_head.rva2off(self.expdesc.addressoffunctions)] = str(self.f_address)
+        raw[self.parent_head.rva2off(of1)] = bytes(self.expdesc)
+        raw[self.parent_head.rva2off(self.expdesc.name)] = bytes(self.dlldescname)
+        raw[self.parent_head.rva2off(self.expdesc.addressoffunctions)] = bytes(self.f_address)
         if self.expdesc.addressofnames != 0:
-            raw[self.parent_head.rva2off(self.expdesc.addressofnames)] = str(self.f_names)
+            raw[self.parent_head.rva2off(self.expdesc.addressofnames)] = bytes(self.f_names)
         if self.expdesc.addressofordinals != 0:
-            raw[self.parent_head.rva2off(self.expdesc.addressofordinals)] = str(self.f_nameordinals)
+            raw[self.parent_head.rva2off(self.expdesc.addressofordinals)] = bytes(self.f_nameordinals)
         for func in self.f_names:
-            raw[self.parent_head.rva2off(func.rva)] = str(func.name)
+            raw[self.parent_head.rva2off(func.rva)] = bytes(func.name)
 
         # XXX BUG names must be alphanumeric ordered
         names = [func.name for func in self.f_names]
@@ -673,7 +698,7 @@ class DirExport(CStruct):
             log.warn("unsorted export names, may bug")
 
     def set_rva(self, rva, size=None):
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         if self.expdesc is None:
             return
         self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_EXPORT].rva = rva
@@ -697,7 +722,7 @@ class DirExport(CStruct):
             rva += len(func.name)
 
     def __len__(self):
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         length = 0
         if self.expdesc is None:
             return length
@@ -717,7 +742,7 @@ class DirExport(CStruct):
 
         rep = ["<%s %d (%s) %s>" % (self.__class__.__name__,
                                     self.expdesc.numberoffunctions, self.dlldescname, repr(self.expdesc))]
-        tmp_names = [[] for _ in xrange(self.expdesc.numberoffunctions)]
+        tmp_names = [[] for _ in range(self.expdesc.numberoffunctions)]
         for i, entry in enumerate(self.f_names):
             tmp_names[self.f_nameordinals[i].ordinal].append(entry.name)
         for i, entry in enumerate(self.f_address):
@@ -836,7 +861,7 @@ class DirDelay(CStruct):
             delaydesc, length = Delaydesc_e.unpack_l(raw,
                                                      off,
                                                      self.parent_head)
-            if raw[off:off+length] == '\x00'*length:
+            if raw[off:off+length] == b'\x00' * length:
                 # Special case
                 break
             off += length
@@ -845,7 +870,7 @@ class DirDelay(CStruct):
         if self.parent_head._wsize == 32:
             mask_ptr = 0x80000000
         elif self.parent_head._wsize == 64:
-            mask_ptr = 0x8000000000000000L
+            mask_ptr = 0x8000000000000000
 
         parent = self.parent_head
         for entry in out:
@@ -880,9 +905,9 @@ class DirDelay(CStruct):
             elif entry.firstthunk:
                 tmp_thunk = entry.firstthunks
             else:
-                print ValueError("no thunk in delay dir!! ")
+                print(ValueError("no thunk in delay dir!! "))
                 return
-            for i in xrange(len(tmp_thunk)):
+            for i in range(len(tmp_thunk)):
                 if tmp_thunk[i].rva & mask_ptr == 0:
                     imp = ImportByName.unpack(raw,
                                               isfromva(tmp_thunk[i].rva),
@@ -891,16 +916,15 @@ class DirDelay(CStruct):
                 else:
                     entry.impbynames.append(
                         isfromva(tmp_thunk[i].rva & (mask_ptr - 1)))
-                    # print repr(entry[-1])
+                    # print(repr(entry[-1]))
                     # raise ValueError('XXX to check')
         return out, off
 
     def sete(self, entries):
-        raw = "".join([str(entry) for entry in entries]) + "\x00" * (4 * 8)  # DelayDesc_e
-        return raw
+        return "".join(bytes(entry) for entry in entries) + b"\x00" * (4 * 8)  # DelayDesc_e
 
     def __len__(self):
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         length = (len(self.delaydesc) + 1) * (4 * 8)  # DelayDesc_e
         for entry in self.delaydesc:
             length += len(entry.dlldescname)
@@ -914,7 +938,7 @@ class DirDelay(CStruct):
         return length
 
     def set_rva(self, rva, size=None):
-        rva_size = self.parent_head._wsize / 8
+        rva_size = self.parent_head._wsize // 8
         self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_DELAY_IMPORT].rva = rva
         if not size:
             self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_DELAY_IMPORT].size = len(self)
@@ -957,13 +981,13 @@ class DirDelay(CStruct):
         of1 = dirdelay.rva
         if not of1:  # No Delay Import
             return
-        raw[self.parent_head.rva2off(of1)] = str(self)
+        raw[self.parent_head.rva2off(of1)] = bytes(self)
         for entry in self.delaydesc:
-            raw[self.parent_head.rva2off(entry.name)] = str(entry.dlldescname)
+            raw[self.parent_head.rva2off(entry.name)] = bytes(entry.dlldescname)
             if entry.originalfirstthunk and self.parent_head.rva2off(entry.originalfirstthunk):
-                raw[self.parent_head.rva2off(entry.originalfirstthunk)] = str(entry.originalfirstthunks)
+                raw[self.parent_head.rva2off(entry.originalfirstthunk)] = bytes(entry.originalfirstthunks)
             if entry.firstthunk:
-                raw[self.parent_head.rva2off(entry.firstthunk)] = str(entry.firstthunks)
+                raw[self.parent_head.rva2off(entry.firstthunk)] = bytes(entry.firstthunks)
             if entry.originalfirstthunk and self.parent_head.rva2off(entry.originalfirstthunk):
                 tmp_thunk = entry.originalfirstthunks
             elif entry.firstthunk:
@@ -972,7 +996,7 @@ class DirDelay(CStruct):
                 raise RuntimeError("No thunk!")
             for j, imp in enumerate(entry.impbynames):
                 if isinstance(imp, ImportByName):
-                    raw[self.parent_head.rva2off(tmp_thunk[j].rva)] = str(imp)
+                    raw[self.parent_head.rva2off(tmp_thunk[j].rva)] = bytes(imp)
 
     def __repr__(self):
         rep = ["<%s>" % self.__class__.__name__]
@@ -988,11 +1012,17 @@ class DirDelay(CStruct):
         if self.parent_head._wsize == 32:
             mask_ptr = 0x80000000
         elif self.parent_head._wsize == 64:
-            mask_ptr = 0x8000000000000000L
+            mask_ptr = 0x8000000000000000
         new_impdesc = []
         of1 = None
         new_delaydesc = []
         for import_descriptor, new_functions in new_dll:
+            if isinstance(import_descriptor.get("name"), str):
+                import_descriptor["name"] = import_descriptor["name"].encode()
+            new_functions = [
+                funcname.encode() if isinstance(funcname, str) else funcname
+                for funcname in new_functions
+            ]
             for attr in ["attrs", "name", "hmod", "firstthunk", "originalfirstthunk", "boundiat", "unloadiat", "timestamp"]:
                 if not attr in import_descriptor:
                     import_descriptor[attr] = 0
@@ -1001,7 +1031,7 @@ class DirDelay(CStruct):
             if entry.firstthunk != None:
                 of1 = entry.firstthunk
             elif of1 == None:
-                raise "set fthunk"
+                raise RuntimeError("set fthunk")
             else:
                 entry.firstthunk = of1
             entry.dlldescname = DescName(self.parent_head, name=entry.name)
@@ -1016,16 +1046,16 @@ class DirDelay(CStruct):
             impbynames = []
             for new_function in new_functions:
                 rva_ofirstt = Rva(self.parent_head)
-                if type(new_function) in [int, long]:
+                if isinstance(new_function, int_types):
                     rva_ofirstt.rva = mask_ptr + new_function
                     ibn = None
-                elif type(new_function) in [str]:
+                elif isinstance(new_function, bytes):
                     rva_ofirstt.rva = True
                     ibn = ImportByName(self.parent_head)
                     ibn.name = new_function
                     ibn.hint = 0
                 else:
-                    raise 'unknown func type %s' % str(new_function)
+                    raise RuntimeError('unknown func type %s' % new_function)
                 impbynames.append(ibn)
                 entry.originalfirstthunks.append(rva_ofirstt)
 
@@ -1063,18 +1093,18 @@ class DirDelay(CStruct):
                 tmp_thunk = entry.firstthunks
             else:
                 raise RuntimeError("No thunk!")
-            if type(func) is str:
+            if isinstance(func, bytes):
                 for j, imp in enumerate(entry.impbynames):
                     if isinstance(imp, ImportByName):
                         if func == imp.name:
                             return isfromva(entry.firstthunk) + j * 4
-            elif type(func) in (int, long):
+            elif isinstance(func, int_types):
                 for j, imp in enumerate(entry.impbynames):
                     if not isinstance(imp, ImportByName):
                         if isfromva(tmp_thunk[j].rva & 0x7FFFFFFF) == func:
                             return isfromva(entry.firstthunk) + j * 4
             else:
-                raise ValueError('unknown func tpye %s' % str(func))
+                raise ValueError('unknown func tpye %r' % func)
 
     def get_funcvirt(self, addr):
         rva = self.get_funcrva(addr)
@@ -1133,18 +1163,17 @@ class DirReloc(CStruct):
             reldesc.rels = struct_array(self, raw,
                                         of2,
                                         Reloc,
-                                        (reldesc.size - length) / 2)  # / Reloc size
+                                        (reldesc.size - length) // 2)  # / Reloc size
             reldesc.patchrel = False
             out.append(reldesc)
             off += reldesc.size
         return out, off
 
     def sete(self, entries):
-        rep = []
-        for entry in entries:
-            rep.append(str(entry))
-            rep.append(str(entry.rels))
-        return "".join(rep)
+        return b"".join(
+            bytes(entry) + bytes(entry.rels)
+            for entry in entrie
+        )
 
     def set_rva(self, rva, size=None):
         if self.reldesc is None:
@@ -1163,7 +1192,7 @@ class DirReloc(CStruct):
         of1 = dirrel.rva
         if self.reldesc is None:  # No Reloc
             return
-        raw[self.parent_head.rva2off(of1)] = str(self)
+        raw[self.parent_head.rva2off(of1)] = bytes(self)
 
     def __len__(self):
         if self.reldesc is None:
@@ -1173,12 +1202,16 @@ class DirReloc(CStruct):
             length += entry.size
         return length
 
+    def __bytes__(self):
+        return b"".join(
+            bytes(entry) + bytes(entry.rels)
+            for entry in self.reldesc
+        )
+
     def __str__(self):
-        rep = []
-        for entry in self.reldesc:
-            rep.append(str(entry))
-            rep.append(str(entry.rels))
-        return "".join(rep)
+        if PY3:
+            return repr(self)
+        return self.__bytes__()
 
     def __repr__(self):
         rep = ["<%s>" % self.__class__.__name__]
@@ -1213,14 +1246,14 @@ class DirReloc(CStruct):
             else:
                 all_base_ad.pop()
                 rels_by_base[all_base_ad[-1]].append(reloc)
-        rels_by_base = [x for x in rels_by_base.items()]
+        rels_by_base = [x for x in list(rels_by_base.items())]
         rels_by_base.sort()
         for o_init, rels in rels_by_base:
             # o_init = rels[0]&0xFFFFF000
             offsets = struct_array(self, None, None, Reloc, 0)
             for reloc_value in rels:
                 if (reloc_value & 0xFFFFF000) != o_init:
-                    raise "relocs must be in same range"
+                    raise RuntimeError("relocs must be in same range")
                 reloc = Reloc(self.parent_head)
                 reloc.rel = (rtype, reloc_value - o_init)
                 offsets.append(reloc)
@@ -1247,7 +1280,7 @@ class DirReloc(CStruct):
             while i < len(rel.rels):
                 reloc = rel.rels[i]
                 if reloc.rel[0] != 0 and reloc.rel[1] + of1 in taboffset:
-                    print 'del reloc', hex(reloc.rel[1] + of1)
+                    print('del reloc', hex(reloc.rel[1] + of1))
                     del rel.rels[i]
                     rel.size -= Reloc._size
                 else:
@@ -1276,7 +1309,7 @@ class DirRes(CStruct):
 
         out = []
         tmp_off = off
-        for _ in xrange(nbr):
+        for _ in range(nbr):
             if tmp_off >= ofend:
                 break
             if tmp_off + length >= len(raw):
@@ -1341,25 +1374,25 @@ class DirRes(CStruct):
         if self.resdesc is None:
             return
         of1 = self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_RESOURCE].rva
-        raw[self.parent_head.rva2off(of1)] = str(self.resdesc)
+        raw[self.parent_head.rva2off(of1)] = bytes(self.resdesc)
         dir_todo = {self.parent_head.NThdr.optentries[
             DIRECTORY_ENTRY_RESOURCE].rva: self.resdesc}
         dir_done = {}
         while dir_todo:
             of1, my_dir = dir_todo.popitem()
             dir_done[of1] = my_dir
-            raw[self.parent_head.rva2off(of1)] = str(my_dir)
+            raw[self.parent_head.rva2off(of1)] = bytes(my_dir)
             of1 += len(my_dir)
             of_base = of1
             for entry in my_dir.resentries:
-                raw[of_base] = str(entry)
+                raw[of_base] = bytes(entry)
                 of_base += len(entry)
                 if entry.name_s:
-                    raw[self.parent_head.rva2off(entry.name)] = str(entry.name_s)
+                    raw[self.parent_head.rva2off(entry.name)] = bytes(entry.name_s)
                 of1 = entry.offsettosubdir
                 if not of1:
-                    raw[self.parent_head.rva2off(entry.offsettodata)] = str(entry.data)
-                    raw[self.parent_head.rva2off(entry.data.offsettodata)] = str(entry.data.s)
+                    raw[self.parent_head.rva2off(entry.offsettodata)] = bytes(entry.data)
+                    raw[self.parent_head.rva2off(entry.data.offsettodata)] = bytes(entry.data.s)
                     continue
                 dir_todo[of1] = entry.subdir
 
@@ -1422,7 +1455,7 @@ class DirRes(CStruct):
                 else:
                     raise RuntimeError("recursive dir")
         dir_todo = dir_done
-        dir_inv = dict(map(lambda x: (x[1], x[0]), dir_todo.items()))
+        dir_inv = dict([(x[1], x[0]) for x in list(dir_todo.items())])
         while dir_todo:
             rva_tmp, my_dir = dir_todo.popitem()
             for entry in my_dir.resentries:
@@ -1462,7 +1495,7 @@ class DirRes(CStruct):
                 else:
                     resources.append((index, repr(entry)))
             else:
-                raise "zarb"
+                raise RuntimeError("zarb")
         for i, resource in resources:
             rep.append(' ' * 4 * i + resource)
         return "\n".join(rep)
@@ -1523,7 +1556,7 @@ class ResEntry(CStruct):
     def _set_name(self, name):
         if self.name_s:
             rva = self.parent_head.NThdr.optentries[DIRECTORY_ENTRY_RESOURCE].rva
-            name = (self.name - rva) + 0x80000000L
+            name = (self.name - rva) + 0x80000000
         return struct.pack('I', name)
 
     def _get_offset(self, raw, off):
@@ -1640,32 +1673,35 @@ RT = {
 
 if __name__ == "__main__":
     import sys
-    PEFILE = sys.stdin
+    try:
+        PEFILE = sys.stdin.buffer
+    except AttributeError:
+        PEFILE = sys.stdin
     if len(sys.argv) > 1:
-        PEFILE = open(sys.argv[1])
+        PEFILE = open(sys.argv[1], 'rb')
     dhdr = Doshdr._from_file(PEFILE)
-    print repr(dhdr)
-    print "sigMZ:", hex(dhdr.magic), hex(len(dhdr))
+    print(repr(dhdr))
+    print("sigMZ:", hex(dhdr.magic), hex(len(dhdr)))
 
     PEFILE.seek(dhdr.lfanew)
     nthdr = NThdr._from_file(PEFILE)
-    print repr(nthdr)
-    print "sigPE:", hex(nthdr.signature), hex(len(nthdr))
+    print(repr(nthdr))
+    print("sigPE:", hex(nthdr.signature), hex(len(nthdr)))
 
     PEFILE.seek(dhdr.lfanew + len(nthdr))
     opthdr = Opthdr._from_file(PEFILE)
-    print repr(opthdr)
-    print "sigHDR:", hex(opthdr.magic), hex(len(opthdr))
+    print(repr(opthdr))
+    print("sigHDR:", hex(opthdr.magic), hex(len(opthdr)))
 
     PEFILE.seek(dhdr.lfanew + len(nthdr) + len(opthdr))
-    for _ in xrange(opthdr.numberofrvaandsizes):
+    for _ in range(opthdr.numberofrvaandsizes):
         optehdr = Optehdr._from_file(PEFILE)
-        print repr(optehdr)
+        print(repr(optehdr))
 
-    print hex(dhdr.lfanew + len(nthdr) + nthdr.sizeofoptionalheader)
+    print(hex(dhdr.lfanew + len(nthdr) + nthdr.sizeofoptionalheader))
     PEFILE.seek(dhdr.lfanew + len(nthdr) + nthdr.sizeofoptionalheader)
-    for _ in xrange(nthdr.numberofsections):
+    for _ in range(nthdr.numberofsections):
         # PEFILE.seek(dhdr.lfanew+len(nthdr))
         shdr = Shdr._from_file(PEFILE)
-        print repr(shdr)
-        print "name:", shdr.name, hex(len(shdr))
+        print(repr(shdr))
+        print("name:", shdr.name, hex(len(shdr)))

@@ -1,11 +1,16 @@
 #! /usr/bin/env python
 
+from __future__ import print_function
+from builtins import str
+from builtins import range
+import logging
 import struct
 
-import cstruct
-import elf
-from strpatchwork import StrPatchwork
-import logging
+from future.utils import PY3, with_metaclass
+
+from elfesteem import cstruct
+from elfesteem import elf
+from elfesteem.strpatchwork import StrPatchwork
 
 log = logging.getLogger("elfparse")
 console_handler = logging.StreamHandler()
@@ -14,26 +19,33 @@ log.addHandler(console_handler)
 log.setLevel(logging.WARN)
 
 
-class test(type):
-    pass
+def printable(string):
+    if isinstance(string, bytes):
+        return "".join(
+            c.decode() if b" " <= c < b"~" else "."
+            for c in (string[i:i+1] for i in range(len(string)))
+        )
+    return string
 
 
-class StructWrapper(object):
+class StructWrapper_metaclass(type):
 
-    class __metaclass__(type):
+    def __new__(cls, name, bases, dct):
+        wrapped = dct["wrapped"]
+        if wrapped is not None:  # XXX: make dct lookup look into base classes
+            for fname, v in wrapped._fields:
+                dct[fname] = property(dct.pop("get_" + fname,
+                                              lambda self, fname=fname: getattr(
+                                                  self.cstr, fname)),
+                                      dct.pop("set_" + fname,
+                                              lambda self, v, fname=fname: setattr(
+                                                  self.cstr, fname, v)),
+                                      dct.pop("del_" + fname, None))
+        return type.__new__(cls, name, bases, dct)
 
-        def __new__(cls, name, bases, dct):
-            wrapped = dct["wrapped"]
-            if wrapped is not None:  # XXX: make dct lookup look into base classes
-                for fname, v in wrapped._fields:
-                    dct[fname] = property(dct.pop("get_" + fname,
-                                                  lambda self, fname=fname: getattr(
-                                                      self.cstr, fname)),
-                                          dct.pop("set_" + fname,
-                                                  lambda self, v, fname=fname: setattr(
-                                                      self.cstr, fname, v)),
-                                          dct.pop("del_" + fname, None))
-            return type.__new__(cls, name, bases, dct)
+
+class StructWrapper(with_metaclass(StructWrapper_metaclass, object)):
+
     wrapped = None
 
     def __init__(self, parent, sex, size, *args, **kargs):
@@ -48,6 +60,9 @@ class StructWrapper(object):
 
     def __str__(self):
         return str(self.cstr)
+
+    def __bytes__(self):
+        return bytes(self.cstr)
 
 
 class WEhdr(StructWrapper):
@@ -164,34 +179,34 @@ class ContentManager(object):
 
 # Sections
 
+class Section_metaclass(type):
 
-class Section(object):
+    def __new__(cls, name, bases, dct):
+        o = type.__new__(cls, name, bases, dct)
+        if name != "Section":
+            Section.register(o)
+        return o
+
+    def register(cls, o):
+        if o.sht is not None:
+            cls.sectypes[o.sht] = o
+
+    def __call__(cls, parent, sex, size, shstr=None):
+        sh = None
+        if shstr is not None:
+            sh = WShdr(None, sex, size, shstr)
+            if sh.type in Section.sectypes:
+                cls = Section.sectypes[sh.type]
+        i = cls.__new__(cls, cls.__name__, cls.__bases__, cls.__dict__)
+        if sh is not None:
+            sh.parent = i
+        i.__init__(parent, sh)
+        return i
+
+
+class Section(with_metaclass(Section_metaclass, object)):
+
     sectypes = {}
-
-    class __metaclass__(type):
-
-        def __new__(cls, name, bases, dct):
-            o = type.__new__(cls, name, bases, dct)
-            if name != "Section":
-                Section.register(o)
-            return o
-
-        def register(cls, o):
-            if o.sht is not None:
-                cls.sectypes[o.sht] = o
-
-        def __call__(cls, parent, sex, size, shstr=None):
-            sh = None
-            if shstr is not None:
-                sh = WShdr(None, sex, size, shstr)
-                if sh.type in Section.sectypes:
-                    cls = Section.sectypes[sh.type]
-            i = cls.__new__(cls, cls.__name__, cls.__bases__, cls.__dict__)
-            if sh is not None:
-                sh.parent = i
-            i.__init__(parent, sh)
-            return i
-
     content = ContentManager()
 
     def resize(self, old, new):
@@ -231,7 +246,7 @@ class Section(object):
         self.parent = parent
         self.phparent = None
         self.sh = sh
-        self._content = ""
+        self._content = b""
 
     def __repr__(self):
         r = "{%(name)s ofs=%(offset)#x sz=%(size)#x addr=%(addr)#010x}" % self.sh
@@ -243,7 +258,7 @@ class NullSection(Section):
 
     def get_name(self, ofs):
         # XXX check this
-        return ""
+        return b""
 
 
 class ProgBits(Section):
@@ -331,12 +346,23 @@ class Dynamic(Section):
             idx += 1
             dyn = WDynamic(self, sex, size, s)
             self.dyntab.append(dyn)
-            if type(dyn.name) is str:
-                self.dynamic[dyn.name] = dyn
+            if isinstance(dyn.name, str):
+                self[dyn.name] = dyn
+
+    def __setitem__(self, item, value):
+        if isinstance(item, bytes):
+            self.dynamic[item] = value
+            return
+        if isinstance(item, str):
+            self.symbols[item.encode()] = value
+            return
+        self.dyntab[item] = value
 
     def __getitem__(self, item):
-        if type(item) is str:
+        if isinstance(item, bytes):
             return self.dynamic[item]
+        if isinstance(item, str):
+            return self.dynamic[item.encode()]
         return self.dyntab[item]
 
 
@@ -351,7 +377,7 @@ class StrTable(Section):
         index = 0
         l = len(c)
         while index < l:
-            p = c.find("\0", index)
+            p = c.find(b"\x00", index)
             if p < 0:
                 log.warning("Missing trailing 0 for string [%s]" % c)  # XXX
                 p = len(c) - index
@@ -362,22 +388,29 @@ class StrTable(Section):
             # c = c[p+1:]
 
     def get_name(self, ofs):
-        n = self.content[ofs:self.content.find('\x00', start=ofs)]
-        return n
+        return self.content[ofs:self.content.find(b'\x00', start=ofs)]
 
     def add_name(self, name):
+        try:
+            name = name.encode()
+        except AttributeError:
+            pass
+        name = name + b"\x00"
         if name in self.content:
             return self.content.find(name)
         n = len(self.content)
-        self.content = str(self.content) + name + "\0"
+        self.content = bytes(self.content) + name
         return n
 
     def mod_name(self, name, new_name):
-        s = str(self.content)
-        if not name in s:
-            raise ValueError('unknown name', name)
-        s = s.replace('\x00' + name + '\x00', '\x00' + new_name + '\x00')
-        self.content = s
+        s = bytes(self.content)
+        name_b = b'\x00%s\x00' % name.encode()
+        if not name_b in s:
+            raise ValueError('Unknown name %r' % name)
+        self.content = s.replace(
+            name_b,
+            b'\x00%s\x00' % new_name.encode()
+        )
         return len(self.content)
 
 
@@ -403,12 +436,23 @@ class SymTable(Section):
             index += sz
             sym = WSym(self, sex, size, s)
             self.symtab.append(sym)
-            self.symbols[sym.name] = sym
+            self[sym.name] = sym
 
     def __getitem__(self, item):
-        if type(item) is str:
+        if isinstance(item, bytes):
             return self.symbols[item]
+        if isinstance(item, str):
+            return self.symbols[item.encode()]
         return self.symtab[item]
+
+    def __setitem__(self, item, value):
+        if isinstance(item, bytes):
+            self.symbols[item] = value
+            return
+        if isinstance(item, str):
+            self.symbols[item.encode()] = value
+            return
+        self.symtab[item] = value
 
 
 class DynSymTable(SymTable):
@@ -466,7 +510,8 @@ class SHList(object):
         for s in self.shlist:
             if not isinstance(s, NoBitsSection):
                 s._content = StrPatchwork(
-                    parent[s.sh.offset: s.sh.offset + s.sh.size])
+                    parent[s.sh.offset: s.sh.offset + s.sh.size]
+                )
         # Follow dependencies when initializing sections
         zero = self.shlist[0]
         todo = self.shlist[1:]
@@ -484,9 +529,9 @@ class SHList(object):
 
     def do_add_section(self, section):
         n = section.sh.name
-        if n.startswith("."):
+        if n.startswith(b"."):
             n = n[1:]
-        n = n.replace(".", "_").replace("-", "_")
+        n = printable(n).replace(".", "_").replace("-", "_")
         setattr(self, n, section)  # xxx
 
     def append(self, item):
@@ -504,11 +549,15 @@ class SHList(object):
             rep.append(l)
         return "\n".join(rep)
 
+    def __bytes__(self):
+        return b"".join(
+            bytes(s.sh) for s in self.shlist
+        )
+
     def __str__(self):
-        c = []
-        for s in self.shlist:
-            c.append(str(s.sh))
-        return "".join(c)
+        if PY3:
+            return repr(self)
+        return bytes(self)
 
     def resize(self, sec, diff):
         for s in self.shlist:
@@ -587,14 +636,18 @@ class PHList(object):
             l = "%(offset)07x %(filesz)06x %(vaddr)08x %(memsz)07x %(type)02x %(flags)01x" % p.ph
             l = ("%2i " % i) + l
             r.append(l)
-            r.append("   " + " ".join([s.sh.name for s in p.shlist]))
+            r.append("   " + " ".join(printable(s.sh.name) for s in p.shlist))
         return "\n".join(r)
 
+    def __bytes__(self):
+        return b"".join(
+            bytes(p.ph) for p in self.phlist
+        )
+
     def __str__(self):
-        c = []
-        for p in self.phlist:
-            c.append(str(p.ph))
-        return "".join(c)
+        if PY3:
+            return repr(self)
+        return self.__bytes__(self)
 
     def resize(self, sec, diff):
         for p in self.phlist:
@@ -662,7 +715,7 @@ class virt(object):
 
     def get(self, ad_start, ad_stop=None):
         rva_items = self.get_rvaitem(ad_start, ad_stop)
-        data_out = ""
+        data_out = b""
         for s, n_item in rva_items:
             if not (isinstance(s, ProgramHeader) or isinstance(s, ProgramHeader64)):
                 data_out += s.content.__getitem__(n_item)
@@ -772,8 +825,8 @@ class ELF(object):
 
     def parse_content(self):
         h = self.content[:8]
-        self.size = ord(h[4]) * 32
-        self.sex = ord(h[5])
+        self.size = struct.unpack('B', h[4:5])[0] * 32
+        self.sex = struct.unpack('B', h[5:6])[0]
         self.Ehdr = WEhdr(self, self.sex, self.size, self.content)
         self.sh = SHList(self, self.sex, self.size)
         self.ph = PHList(self, self.sex, self.size)
@@ -786,15 +839,20 @@ class ELF(object):
 
     def build_content(self):
         c = StrPatchwork()
-        c[0] = str(self.Ehdr)
-        c[self.Ehdr.phoff] = str(self.ph)
+        c[0] = bytes(self.Ehdr)
+        c[self.Ehdr.phoff] = bytes(self.ph)
         for s in self.sh:
-            c[s.sh.offset] = str(s.content)
-        c[self.Ehdr.shoff] = str(self.sh)
-        return str(c)
+            c[s.sh.offset] = bytes(s.content)
+        c[self.Ehdr.shoff] = bytes(self.sh)
+        return bytes(c)
+
+    def __bytes__(self):
+        return self.build_content()
 
     def __str__(self):
-        return self.build_content()
+        if PY3:
+            return repr(self)
+        return bytes(self)
 
     def getphbyvad(self, ad):
         for s in self.ph:
@@ -807,9 +865,16 @@ class ELF(object):
                 return s
 
     def getsectionbyname(self, name):
+        try:
+            name = name.encode()
+        except AttributeError:
+            pass
         for s in self.sh:
-            if s.sh.name.strip('\x00') == name:
-                return s
+            try:
+                if s.sh.name.strip(b'\x00') == name:
+                    return s
+            except UnicodeDecodeError:
+                pass
         return None
 
     def is_in_virt_address(self, ad):
@@ -819,12 +884,10 @@ class ELF(object):
         return False
 
 if __name__ == "__main__":
-    import rlcompleter
-    import readline
     import pdb
-    from pprint import pprint as pp
-    readline.parse_and_bind("tab: complete")
-
-    e = ELF(open("/bin/ls").read())
-    print repr(e)
+    import sys
+    for fname in sys.argv[1:]:
+        e = ELF(open(fname, "rb").read())
+        assert bytes(e) == open(fname, "rb").read()
+    print("OK")
     # o = ELF(open("/tmp/svg-main.o").read())
